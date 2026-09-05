@@ -209,6 +209,14 @@ def run_pipeline() -> List[Article]:
                     print(f"🎉 تم جدولة المنشور الثاني بنجاح لينشر تلقائياً بعد ساعة!")
                 else:
                     print(f"🎉 تم نشر المنشور الأول فورياً بنجاح!")
+            else:
+                if facebook_publisher.last_error_code in (190, 102, 10):
+                    print("\n" + "=" * 65)
+                    print(f"🛑 إيقاف فوري للدورة: تعذر النشر بسبب خطأ تصريح/صلاحية فيسبوك (Error {facebook_publisher.last_error_code})!")
+                    print(f"🛑 تفاصيل: الرمز (Access Token) منتهي الصلاحية أو غير صالح.")
+                    print(f"🛑 تم إيقاف باقي المنشورات فوراً لحماية رصيد وحصص Gemini من الاستهلاك بلا جدوى.")
+                    print("=" * 65)
+                    break
 
             print("-" * 55)
             if len(published_posts) >= max_publish_count:

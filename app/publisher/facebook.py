@@ -45,6 +45,8 @@ class FacebookPublisher:
 
         env_dry = os.getenv("DRY_RUN", "false").strip().lower()
         self.dry_run = dry_run if dry_run is not None else (env_dry in ("true", "1", "yes"))
+        self.last_error_code: Optional[int] = None
+        self.last_error_message: Optional[str] = None
 
     def publish_photo(
         self,
@@ -110,12 +112,19 @@ class FacebookPublisher:
                 print("=" * 60)
 
                 result["url"] = post_url
+                self.last_error_code = None
+                self.last_error_message = None
                 return result
             else:
                 err = result.get("error", {})
                 err_msg = err.get("message", response.text)
-                err_code = err.get("code", "Unknown")
+                try:
+                    err_code = int(err.get("code", 0))
+                except (ValueError, TypeError):
+                    err_code = err.get("code", "Unknown")
                 err_subcode = err.get("error_subcode", "")
+                self.last_error_code = err_code
+                self.last_error_message = err_msg
                 LOGGER.error("Facebook API error (%s): %s", err_code, err_msg)
                 print(f"❌ فشل النشر على فيسبوك! (كود الخطأ: {err_code}, الفرعي: {err_subcode})")
                 print(f"⚠️ تفاصيل الخطأ من فيسبوك: {err_msg}")
