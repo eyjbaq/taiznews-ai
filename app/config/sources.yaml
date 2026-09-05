@@ -1,0 +1,45 @@
+settings:
+  min_reliability: 80
+  max_entries_per_source: 30
+  request_timeout_seconds: 15
+
+sources:
+  - name: "المشهد اليمني"
+    feed_url: "https://www.almashhad.news/feed"
+    reliability: 85
+
+  - name: "كريتر سكاي"
+    feed_url: "https://crater-sky.com/rss"
+    reliability: 85
+
+  - name: "الجزيرة (اليمن)"
+    feed_url: "https://www.aljazeera.net/aljazeerarss/a7c44e68-685a-464a-912f-981fb5f03d52"
+    reliability: 90
+
+  - name: "سبأ نت"
+    feed_url: "https://www.sabanew.net/feed"
+    reliability: 85
+
+  - name: "يمن مونيتور"
+    feed_url: "https://www.yemenmonitor.com/feed/"
+    reliability: 80
+
+  - name: "الصحوة نت"
+    feed_url: "https://alsahwa-net.net/rss"
+    reliability: 80
+
+  - name: "سكاي نيوز عربية"
+    feed_url: "https://www.skynewsarabia.com/rss.xml"
+    reliability: 85
+
+  - name: "العربية (اليمن)"
+    feed_url: "https://www.alarabiya.net/.mrss/ar/yemen.xml"
+    reliability: 85
+
+  - name: "BBC عربي"
+    feed_url: "https://feeds.bbci.co.uk/arabic/rss.xml"
+    reliability: 90
+
+  - name: "فرانس 24"
+    feed_url: "https://www.france24.com/ar/rss"
+    reliability: 90
