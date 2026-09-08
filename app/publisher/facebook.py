@@ -135,6 +135,137 @@ class FacebookPublisher:
             print(f"❌ استثناء أثناء الاتصال بـ Facebook Graph API: {exc}")
             return None
 
+    def publish_reel(
+        self,
+        video_path: Path | str,
+        caption: str,
+        title: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Upload and publish a vertical video as a Reel on the Facebook Page via Graph API."""
+        path = Path(video_path)
+        if not path.exists():
+            LOGGER.error("Video file does not exist: %s", path)
+            print(f"❌ لم يتم العثور على ملف الفيديو: {path}")
+            return None
+
+        if not self.page_id or not self.access_token:
+            LOGGER.error("Missing FACEBOOK_PAGE_ID or FACEBOOK_PAGE_ACCESS_TOKEN.")
+            print("❌ تعذر النشر: بيانات فيسبوك (FACEBOOK_PAGE_ID أو FACEBOOK_PAGE_ACCESS_TOKEN) غير مكتملة في ملف .env")
+            return None
+
+        if self.dry_run:
+            print(f"\n[وضع المحاكاة DRY_RUN=true] لن يتم إرسال طلب نشر ريلز فعلي لفيسبوك.")
+            print(f"📹 مسار ملف الريلز: {path}")
+            print(f"📝 النص المرافق للريلز:\n{caption}")
+            return {
+                "id": "mock_reel_id",
+                "post_id": f"{self.page_id}_mock_reel_post_id",
+                "url": f"https://www.facebook.com/reel/mock_reel_id",
+            }
+
+        file_size = path.stat().st_size
+        file_size_mb = file_size / (1024 * 1024)
+        print(f"\n🚀 جاري رفع مقطع الريلز ونشره على صفحة فيسبوك (Page ID: {self.page_id}, الحجم: {file_size_mb:.1f} MB)...")
+
+        # Approach 1: Dedicated Facebook Reels API (/{page_id}/video_reels)
+        try:
+            init_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{self.page_id}/video_reels"
+            init_payload = {
+                "upload_phase": "start",
+                "access_token": self.access_token,
+            }
+            init_resp = requests.post(init_url, json=init_payload, timeout=30)
+            init_data = init_resp.json()
+
+            if init_resp.status_code == 200 and "upload_url" in init_data:
+                video_id = init_data.get("video_id")
+                upload_url = init_data.get("upload_url")
+                print(f"📡 تم تهيئة جلسة الريلز (Video ID: {video_id}). جاري رفع الملف الثنائي...")
+
+                # Step 2: Binary upload
+                upload_headers = {
+                    "Authorization": f"OAuth {self.access_token}",
+                    "file_size": str(file_size),
+                    "offset": "0",
+                    "Content-Type": "application/octet-stream",
+                }
+                with open(path, "rb") as vf:
+                    upload_resp = requests.post(upload_url, data=vf, headers=upload_headers, timeout=180)
+
+                # Step 3: Finish and Publish
+                finish_payload = {
+                    "upload_phase": "finish",
+                    "video_id": video_id,
+                    "video_state": "PUBLISHED",
+                    "description": caption,
+                    "title": title or caption[:80],
+                    "access_token": self.access_token,
+                }
+                finish_resp = requests.post(init_url, json=finish_payload, timeout=45)
+                finish_data = finish_resp.json()
+
+                if finish_resp.status_code == 200 and finish_data.get("success", False):
+                    reel_url = f"https://www.facebook.com/reel/{video_id}"
+                    print("=" * 60)
+                    print("🎉 تم نشر مقطع الريلز (Reel) بنجاح على فيسبوك عبر Video Reels API!")
+                    print(f"🆔 معرف الريلز: {video_id}")
+                    print(f"🔗 رابط الريلز: {reel_url}")
+                    print("=" * 60)
+                    self.last_error_code = None
+                    self.last_error_message = None
+                    return {"id": video_id, "post_id": video_id, "url": reel_url}
+                else:
+                    LOGGER.warning("video_reels finish returned: %s, falling back to /videos...", finish_data)
+            else:
+                LOGGER.warning("video_reels init returned: %s, falling back to /videos...", init_data)
+        except Exception as reel_exc:
+            LOGGER.warning("video_reels endpoint exception: %s, falling back to /videos...", reel_exc)
+
+        # Approach 2 (Fallback): Standard /{page_id}/videos endpoint (FB auto-detects 9:16 vertical as Reels)
+        try:
+            print("🔄 جاري الرفع عبر نقطة النهاية الموثوقة (/{page_id}/videos)...")
+            fallback_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{self.page_id}/videos"
+            with open(path, "rb") as vf:
+                files = {"source": (path.name, vf, "video/mp4")}
+                data = {
+                    "description": caption,
+                    "title": title or caption[:80],
+                    "access_token": self.access_token,
+                }
+                resp = requests.post(fallback_url, data=data, files=files, timeout=180)
+
+            result = resp.json()
+            if resp.status_code == 200 and "id" in result:
+                vid_id = result.get("id")
+                post_url = f"https://www.facebook.com/watch/?v={vid_id}"
+                print("=" * 60)
+                print("🎉 تم نشر مقطع الريلز بنجاح على صفحة فيسبوك!")
+                print(f"🆔 معرف الفيديو/الريلز: {vid_id}")
+                print(f"🔗 الرابط: {post_url}")
+                print("=" * 60)
+                self.last_error_code = None
+                self.last_error_message = None
+                result["url"] = post_url
+                return result
+            else:
+                err = result.get("error", {})
+                err_msg = err.get("message", resp.text)
+                try:
+                    err_code = int(err.get("code", 0))
+                except (ValueError, TypeError):
+                    err_code = err.get("code", "Unknown")
+                err_subcode = err.get("error_subcode", "")
+                self.last_error_code = err_code
+                self.last_error_message = err_msg
+                LOGGER.error("Facebook Video API error (%s): %s", err_code, err_msg)
+                print(f"❌ فشل نشر الريلز على فيسبوك! (كود الخطأ: {err_code}, الفرعي: {err_subcode})")
+                print(f"⚠️ تفاصيل الخطأ من فيسبوك: {err_msg}")
+                return None
+        except Exception as exc:
+            LOGGER.error("Failed to publish video to Facebook: %s", exc)
+            print(f"❌ استثناء أثناء نشر الفيديو على فيسبوك: {exc}")
+            return None
+
 
 def publish_news_card(
     image_path: Path | str,
@@ -147,4 +278,18 @@ def publish_news_card(
     """Helper function to publish a news card with caption."""
     publisher = FacebookPublisher(page_id=page_id, access_token=access_token, dry_run=dry_run)
     return publisher.publish_photo(image_path, caption, scheduled_publish_time=scheduled_publish_time)
+
+
+def publish_news_reel(
+    video_path: Path | str,
+    caption: str,
+    title: str = "",
+    page_id: Optional[str] = None,
+    access_token: Optional[str] = None,
+    dry_run: Optional[bool] = None,
+) -> Optional[Dict[str, Any]]:
+    """Helper function to publish a news reel video."""
+    publisher = FacebookPublisher(page_id=page_id, access_token=access_token, dry_run=dry_run)
+    return publisher.publish_reel(video_path, caption, title=title)
+
 

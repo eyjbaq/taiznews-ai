@@ -116,24 +116,21 @@ def _entry_to_article(entry: Any, source_name: str) -> Optional[Article]:
 
 def fetch_rss_articles(
     config_path: Optional[Path] = None,
-    timeout: int = 20,
+    timeout: int = 15,
     max_entries_per_source: int = 30,
 ) -> List[Article]:
-    """Fetch configured RSS feeds and map entries to :class:`Article` objects.
-
-    A broken or unavailable feed is logged and skipped so other sources can
-    still contribute news during the dry run.
-    """
-
+    """Fetch configured RSS feeds concurrently and map entries to Article objects."""
+    sources = load_sources(config_path)
     articles: List[Article] = []
-    for source in load_sources(config_path):
+
+    def _fetch_source(source: Dict[str, Any]) -> List[Article]:
         source_name = str(source["name"])
         feed_url = str(source["feed_url"])
         try:
             response = requests.get(feed_url, headers=RSS_HEADERS, timeout=timeout)
             if response.status_code != 200:
                 LOGGER.warning("RSS source failed (%s): HTTP status %d", source_name, response.status_code)
-                continue
+                return []
 
             content_type = response.headers.get("Content-Type", "").lower()
             text_prefix = response.text.lstrip()[:100].lower()
@@ -143,7 +140,7 @@ def fetch_rss_articles(
                 or text_prefix.startswith("<html")
             ):
                 LOGGER.warning("RSS source skipped (%s): HTML response received instead of XML", source_name)
-                continue
+                return []
 
             parsed_feed = feedparser.parse(response.content)
             if getattr(parsed_feed, "bozo", False) and not getattr(parsed_feed, "entries", []):
@@ -155,8 +152,19 @@ def fetch_rss_articles(
                 if article:
                     source_articles.append(article)
             LOGGER.info("RSS source %s: %d articles", source_name, len(source_articles))
-            articles.extend(source_articles)
+            return source_articles
         except (requests.RequestException, ValueError, UnicodeError) as exc:
             LOGGER.warning("RSS source failed (%s): %s", source_name, exc)
+            return []
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=min(len(sources), 8)) as executor:
+        futures = [executor.submit(_fetch_source, s) for s in sources]
+        for future in as_completed(futures):
+            try:
+                articles.extend(future.result())
+            except Exception as e:
+                LOGGER.warning("Error fetching RSS source: %s", e)
 
     return articles
+

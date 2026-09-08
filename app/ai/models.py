@@ -1,4 +1,4 @@
-﻿"""Pydantic models for structured AI editorial outputs."""
+"""Pydantic models for structured AI editorial outputs."""
 
 from __future__ import annotations
 
@@ -37,3 +37,12 @@ class EditorialPost(BaseModel):
         default="",
         description="سبب استبعاد الخبر إذا كان should_publish = False"
     )
+    image_prompt_en: str = Field(
+        default="",
+        description="A detailed English prompt for generating a photorealistic editorial background image related to the news event."
+    )
+    image_prompts_en: List[str] = Field(
+        default_factory=list,
+        description="A sequential list of 4 to 5 detailed English image prompts creating a storyboard matching the progression of the news event in Taiz / Yemen (Hook, Core Action, Perspective/Detail, Human Context, Resolution)."
+    )
+
