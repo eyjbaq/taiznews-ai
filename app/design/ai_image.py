@@ -6,12 +6,14 @@ returned by Gemini's editorial engine. Images are saved locally for reel composi
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import time
 from pathlib import Path
 from urllib.parse import quote
 
 import requests
+from PIL import Image, ImageFilter
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ POLLINATIONS_BASE_URL = "https://image.pollinations.ai/prompt"
 # Reels dimensions (vertical 9:16)
 REEL_WIDTH = 1080
 REEL_HEIGHT = 1920
+SUPERSAMPLE_FACTOR = 1.4
 
 
 def generate_ai_image(
@@ -32,9 +35,9 @@ def generate_ai_image(
     height: int = REEL_HEIGHT,
     slug: str = "reel_bg",
     max_retries: int = 3,
-    timeout: int = 90,
+    timeout: int = 120,
 ) -> str | None:
-    """Generate a photorealistic image via Pollinations.ai and save it locally.
+    """Generate a photorealistic image via Pollinations.ai, supersampled and enhanced.
 
     Args:
         prompt: English description of the desired image.
@@ -56,11 +59,13 @@ def generate_ai_image(
     out_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build the Pollinations URL with Flux model for photorealistic quality
+    # Request at supersampled resolution with enhance=true for richer details
+    gen_width = int(width * SUPERSAMPLE_FACTOR)
+    gen_height = int(height * SUPERSAMPLE_FACTOR)
     encoded_prompt = quote(prompt.strip(), safe="")
-    url = f"{POLLINATIONS_BASE_URL}/{encoded_prompt}?width={width}&height={height}&nologo=true&model=flux"
+    url = f"{POLLINATIONS_BASE_URL}/{encoded_prompt}?width={gen_width}&height={gen_height}&model=flux&nologo=true&enhance=true"
 
-    print(f"🎨 جاري توليد صورة AI واقعية عبر Pollinations (Flux Engine - {width}x{height})...")
+    print(f"🎨 جاري توليد صورة AI واقعية عبر Pollinations (Flux Engine - {gen_width}x{gen_height} + enhance)...")
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -94,14 +99,24 @@ def generate_ai_image(
                 )
                 continue
 
-            # Save to file
+            # Save initial image
             timestamp = int(time.time())
             output_file = out_dir / f"{slug}_{timestamp}.png"
             with open(output_file, "wb") as f:
                 f.write(image_data)
 
-            file_size_kb = len(image_data) / 1024
-            print(f"✅ تم توليد صورة AI بنجاح ({file_size_kb:.0f} KB): {output_file.name}")
+            # Post-processing: downscale with LANCZOS and subtle unsharp mask for maximum visual clarity
+            try:
+                with Image.open(output_file) as img:
+                    img = img.convert("RGB")
+                    img = img.resize((width, height), Image.Resampling.LANCZOS)
+                    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=120, threshold=3))
+                    img.save(output_file, "PNG", optimize=True)
+            except Exception as post_err:
+                LOGGER.warning("Post-processing image %s failed: %s", output_file.name, post_err)
+
+            file_size_kb = output_file.stat().st_size / 1024
+            print(f"✅ تم توليد وتوضيح صورة AI بنجاح ({file_size_kb:.0f} KB): {output_file.name}")
             LOGGER.info("AI image saved to: %s (%d KB)", output_file, file_size_kb)
             return str(output_file)
 
@@ -126,29 +141,40 @@ def generate_ai_images(
     width: int = REEL_WIDTH,
     height: int = REEL_HEIGHT,
     slug_prefix: str = "reel_scene",
-    max_workers: int = 2,
+    max_workers: int = 3,
 ) -> list[str]:
-    """Generate multiple AI storyboard scenes via Pollinations Flux with rate-limit protection."""
+    """Generate multiple AI storyboard scenes concurrently via Pollinations Flux while preserving scene order."""
     if not prompts:
         return []
 
-    print(f"🎨 [Storyboarding] جاري توليد {len(prompts)} مشاهد مصورة عبر Flux Engine...")
-    ordered_paths: list[str] = []
+    print(f"🎨 [Storyboarding] جاري توليد {len(prompts)} مشاهد مصورة عبر Flux Engine (بالتوازي - {max_workers} مسارات)...")
 
-    for idx, p in enumerate(prompts):
-        slug = f"{slug_prefix}_{idx + 1}"
-        if idx > 0:
-            time.sleep(1.5)  # Safe stagger to prevent Pollinations 429
-        path = generate_ai_image(
-            prompt=p,
-            output_dir=output_dir,
-            width=width,
-            height=height,
-            slug=slug,
-        )
-        if path:
-            ordered_paths.append(path)
+    results: dict[int, str] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {}
+        for idx, p in enumerate(prompts):
+            if idx > 0:
+                time.sleep(1.2)  # Stagger submission to prevent instant 429 bursts
+            fut = executor.submit(
+                generate_ai_image,
+                prompt=p,
+                output_dir=output_dir,
+                width=width,
+                height=height,
+                slug=f"{slug_prefix}_{idx + 1}",
+            )
+            future_to_idx[fut] = idx
+        for future in concurrent.futures.as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                path = future.result()
+                if path:
+                    results[idx] = path
+            except Exception as exc:
+                LOGGER.warning("Scene %d generation failed: %s", idx, exc)
 
+    # Maintain strict original storyboard scene order (1 -> 5)
+    ordered_paths = [results[i] for i in sorted(results.keys())]
     print(f"🎬 اكتمل توليد {len(ordered_paths)}/{len(prompts)} مشاهد مصورة متتالية للريلز.")
     return ordered_paths
 

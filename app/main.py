@@ -137,8 +137,8 @@ def run_pipeline() -> List[Article]:
 
         card_renderer = NewsCardRenderer()
         facebook_publisher = FacebookPublisher()
-        # In DRY_RUN mode, test 1 post only as requested
-        max_publish_count = 1 if facebook_publisher.dry_run else int(os.getenv("MAX_POSTS_PER_RUN", "2"))
+        # Target posts per run (defaults to 2: 1 photo card + 1 news reel)
+        max_publish_count = int(os.getenv("MAX_POSTS_PER_RUN", "2"))
         recent_posts_context = get_recent_published_summary(limit=5)
         published_posts = []
         editorial_posts = []
@@ -307,7 +307,7 @@ def run_pipeline() -> List[Article]:
                 break
 
         # If only 1 post was published and we have an approved story, also create its reel so we always produce 1 Photo + 1 Reel
-        if len(published_posts) == 1 and max_publish_count >= 2 and len(editorial_posts) > 0:
+        if len(published_posts) == 1 and len(editorial_posts) > 0:
             article, post = editorial_posts[0]
             print("\n" + "=" * 55)
             print("🎬 [توليد ريلز إضافي] لم يتوفر خبر ثانٍ مؤهل، جاري تحويل الخبر الأول إلى مقطع ريلز فورياً...")

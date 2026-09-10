@@ -37,7 +37,7 @@ from app.processing.relevance import filter_relevant
 from app.processing.history import get_recent_published_summary
 from app.ai.editorial import process_article
 from app.ai.quota_manager import QUOTA_MANAGER
-from app.design.ai_image import generate_ai_image
+from app.design.ai_image import generate_ai_image, generate_ai_images
 from app.design.tts_generator import generate_news_audio
 from app.design.reel_maker import compose_news_reel
 from app.design.renderer import NewsCardRenderer
@@ -176,32 +176,33 @@ def run_reels_test() -> None:
         print(f"⚠️ تعذر تصميم البطاقة: {e}")
         card_path = None
 
-    # ─── Phase 3b: AI Background Image (NEW) ───
-    print(f"\n🎨 المرحلة 3b: توليد صورة خلفية AI عبر Pollinations...")
-    image_prompt = post.image_prompt_en
-    if not image_prompt:
-        # Fallback generic prompt
-        image_prompt = (
-            "Wide aerial view of Taiz city Yemen at golden hour, "
-            "ancient stone buildings on green hillside, dramatic clouds, "
-            "cinematic lighting, photorealistic, editorial photography, 8K"
-        )
-        print(f"⚠️ لم يوفر Gemini وصف صورة، استخدام وصف افتراضي.")
+    # ─── Phase 3b: Multi-Scene AI Images (Storyboarding) ───
+    print(f"\n🎨 المرحلة 3b: توليد مشاهد القصة البصرية عبر Pollinations Flux...")
+    prompts = post.image_prompts_en if hasattr(post, "image_prompts_en") and post.image_prompts_en else []
+    if not prompts and post.image_prompt_en:
+        prompts = [post.image_prompt_en]
+    if not prompts:
+        prompts = [
+            f"Establishing wide shot of Yemeni mountain city Taiz {post.category}, ancient stone houses, dramatic clouds, cinematic lighting, 8k",
+            f"Photojournalism of armed military technical pickup truck on rugged mountain road in Taiz Yemen, distant smoke, 35mm lens",
+            f"Yemeni soldiers in uniform scanning the horizon from rocky ridge overlooking Taiz valley, dramatic natural lighting",
+            f"Scenic golden hour view over Mount Sabir ridges in Taiz Yemen, cinematic documentary photojournalism",
+        ]
 
-    ai_image_path = generate_ai_image(
-        prompt=image_prompt,
-        slug=f"reel_bg_{target_article.id[:8]}",
+    scene_images = generate_ai_images(
+        prompts=prompts,
+        slug_prefix=f"reel_scene_{target_article.id[:8]}",
     )
 
-    if not ai_image_path:
-        print("❌ تعذر توليد صورة AI. إيقاف مسار الريلز.")
+    if not scene_images:
+        print("❌ تعذر توليد صور المشاهد. إيقاف مسار الريلز.")
         return
 
-    # ─── Phase 3c: TTS Narration (NEW) ───
-    print(f"\n🎙️ المرحلة 3c: توليد التعليق الصوتي...")
-    # Compose the narration text: headline + body
-    narration_text = f"{post.headline}. {post.body}"
-    audio_path = generate_news_audio(
+    # ─── Phase 3c: TTS Narration + Word Timestamps ───
+    print(f"\n🎙️ المرحلة 3c: توليد التعليق الصوتي وتوقيت الكلمات...")
+    first_para = post.body.split("\n\n")[0].strip()
+    narration_text = f"{post.headline}. {first_para}"
+    audio_path, word_timestamps = generate_news_audio(
         text=narration_text,
         slug=f"reel_tts_{target_article.id[:8]}",
     )
@@ -210,11 +211,14 @@ def run_reels_test() -> None:
         print("❌ تعذر توليد الصوت. إيقاف مسار الريلز.")
         return
 
-    # ─── Phase 3d: Reel Video Composition (NEW) ───
-    print(f"\n🎬 المرحلة 3d: تركيب مقطع الريلز (صورة + صوت + حركة)...")
+    # ─── Phase 3d: Reel Video Composition ───
+    print(f"\n🎬 المرحلة 3d: تركيب مقطع الريلز المتكامل (مشاهد + صوت + كاريوكي)...")
     reel_path = compose_news_reel(
-        image_path=ai_image_path,
+        image_paths=scene_images,
         audio_path=audio_path,
+        word_timestamps=word_timestamps,
+        headline=post.headline,
+        category=post.category,
         slug=f"reel_{target_article.id[:8]}",
     )
 

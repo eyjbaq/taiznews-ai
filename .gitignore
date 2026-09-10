@@ -25,3 +25,4 @@ data/generated_reels/*
 .idea/
 .DS_Store
 Thumbs.db
+*.zip
