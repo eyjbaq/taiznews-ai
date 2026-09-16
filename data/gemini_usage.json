@@ -1,11 +1,11 @@
 {
   "gemini-3.6-flash": {
-    "usage_count": 2,
+    "usage_count": 5,
     "daily_limit": 20,
     "first_request_at": "2026-09-15T19:54:00.155149+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
-    "last_request_at": "2026-09-15T19:54:40.404515+00:00"
+    "last_request_at": "2026-09-16T09:35:18.127377+00:00"
   },
   "gemini-3.5-flash": {
     "usage_count": 1,
