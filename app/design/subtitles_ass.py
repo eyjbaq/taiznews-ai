@@ -9,6 +9,7 @@ actual root cause of the reordering bug.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -16,6 +17,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 REEL_WIDTH = 1080
 CANVAS_HEIGHT = 220
+
+
+def strip_tashkeel(text: str) -> str:
+    """Remove Arabic diacritics / harakat to ensure 100% clean on-screen captions."""
+    return re.sub(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]", "", text).strip()
 
 
 def _group_words_into_chunks(
@@ -35,7 +41,8 @@ def _render_state_image(
     canvas = Image.new("RGBA", (REEL_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
 
-    words = [str(w.get("text", "")).strip() for w in chunk]
+    words = [strip_tashkeel(str(w.get("text", ""))) for w in chunk]
+
     word_lens = [draw.textlength(t, font=font, direction="rtl") for t in words]
     space_w = draw.textlength(" ", font=font, direction="rtl")
     total_w = sum(word_lens) + space_w * (len(words) - 1)

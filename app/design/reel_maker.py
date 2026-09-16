@@ -26,6 +26,8 @@ from app.design.subtitles_ass import generate_subtitle_states
 
 LOGGER = logging.getLogger(__name__)
 
+
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "generated_reels"
 DEFAULT_AUDIO_DIR = BASE_DIR / "assets" / "audio"
@@ -139,6 +141,30 @@ def _create_bottom_gradient(width: int = REEL_WIDTH, height: int = 650) -> Image
     return grad
 
 
+def _create_source_attribution_badge(attribution: str, width: int = REEL_WIDTH) -> Image.Image:
+    """Create a subtle source attribution chip for the top right safe area."""
+    badge = Image.new("RGBA", (width, 100), (0, 0, 0, 0))
+    if not attribution:
+        return badge
+
+    draw = ImageDraw.Draw(badge)
+    font = _get_font(26)
+    text = f"المصدر: {attribution}"
+    bbox = draw.textbbox((0, 0), text, font=font, direction="rtl")
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+
+    pad_x, pad_y = 18, 8
+    box_w = tw + (pad_x * 2)
+    box_h = th + (pad_y * 2)
+    x = width - box_w - 50
+    y = 230
+
+    draw.rounded_rectangle([x, y, x + box_w, y + box_h], radius=10, fill=(0, 0, 0, 160))
+    draw.text((x + pad_x, y + pad_y), text, font=font, fill=(230, 230, 230, 240), direction="rtl")
+    return badge
+
+
 def _render_scene_clip_ffmpeg(
     image_path: Union[str, Path],
     duration: float,
@@ -215,6 +241,7 @@ def compose_news_reel(
     word_timestamps: Optional[List[Dict[str, Any]]] = None,
     headline: str = "",
     category: str = "",
+    source_attribution: str = "",
     slug: str = "reel",
     zoom_factor: float = 1.14,
     fps: int = 24,
@@ -235,18 +262,7 @@ def compose_news_reel(
     Returns:
         Path to output .mp4 video file, or None on failure.
     """
-    # 1. Validate inputs
-    if isinstance(image_paths, (str, Path)):
-        raw_images = [str(image_paths)]
-    else:
-        raw_images = [str(p) for p in image_paths if p]
-
-    valid_images = [p for p in raw_images if Path(p).exists()]
-    if not valid_images:
-        LOGGER.error("No valid image files provided for reel.")
-        print("❌ لم يتم العثور على أي ملفات صور صالحة لتركيب الريلز.")
-        return None
-
+    # 1. Validate audio input
     aud_file = Path(audio_path)
     if not aud_file.exists():
         LOGGER.error("Audio file not found: %s", aud_file)
@@ -264,6 +280,20 @@ def compose_news_reel(
         LOGGER.warning("Audio duration too short (%.2fs), skipping reel composition.", total_duration)
         return None
 
+    # Validate image paths
+    if isinstance(image_paths, (str, Path)):
+        raw_images = [str(image_paths)]
+    elif image_paths:
+        raw_images = [str(p) for p in image_paths if p]
+    else:
+        raw_images = []
+
+    valid_images = [p for p in raw_images if Path(p).exists()]
+    if not valid_images:
+        LOGGER.error("No valid image files provided for reel.")
+        print("❌ لم يتم العثور على أي ملفات صور صالحة لتركيب الريلز.")
+        return None
+
     out_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -272,13 +302,10 @@ def compose_news_reel(
     temp_dir = out_dir / f"_temp_render_{timestamp}_{os.getpid()}"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    num_scenes = len(valid_images)
-    scene_duration = total_duration / float(num_scenes)
-
-    print(f"🎬 جاري تركيب مقطع الريلز المتكامل عبر FFmpeg ({num_scenes} مشاهد + ترجمة متحركة + موسيقى خلفية)...")
+    stitched_video = temp_dir / "stitched_raw.mp4"
 
     try:
-        # 2. Pre-render persistent top badge & bottom gradient overlays
+        # 2. Pre-render persistent top badge, bottom gradient & source attribution overlays
         badge_img = _create_top_badge(width=REEL_WIDTH)
         badge_path = temp_dir / "_badge_overlay.png"
         badge_img.save(str(badge_path), "PNG")
@@ -286,6 +313,16 @@ def compose_news_reel(
         gradient_img = _create_bottom_gradient(width=REEL_WIDTH, height=650)
         gradient_path = temp_dir / "_gradient_overlay.png"
         gradient_img.save(str(gradient_path), "PNG")
+
+        attr_path = None
+        if source_attribution:
+            attr_img = _create_source_attribution_badge(source_attribution, width=REEL_WIDTH)
+            attr_path = temp_dir / "_attr_overlay.png"
+            attr_img.save(str(attr_path), "PNG")
+
+        num_scenes = len(valid_images)
+        scene_duration = total_duration / float(num_scenes)
+        print(f"🎬 جاري تركيب مقطع الريلز المتكامل عبر FFmpeg ({num_scenes} مشاهد + ترجمة متحركة + موسيقى خلفية)...")
 
         # 3. Render scene clips concurrently with Ken Burns motion
         scene_clip_paths: List[Path] = []
@@ -317,7 +354,6 @@ def compose_news_reel(
             for c in scene_clip_paths:
                 f.write(f"file '{str(c.resolve()).replace(chr(92), '/')}'\n")
 
-        stitched_video = temp_dir / "stitched_raw.mp4"
         cmd_concat = [
             "ffmpeg",
             "-y",
@@ -349,31 +385,43 @@ def compose_news_reel(
         )
 
         # 6. Build FFmpeg input list and filter-complex overlay chain
-        cmd_inputs = [
-            "-i", str(stitched_video),    # [0:v]
-            "-i", str(aud_file),          # [1:a]
-            "-i", str(gradient_path),     # [2:v]
-            "-i", str(badge_path),        # [3:v]
+        input_files: List[Path] = [
+            stitched_video,    # [0:v]
+            aud_file,          # [1:a]
+            gradient_path,     # [2:v]
+            badge_path,        # [3:v]
         ]
+
+        attr_idx: Optional[int] = None
+        if attr_path:
+            attr_idx = len(input_files)
+            input_files.append(attr_path)
+
+        bgm_idx: Optional[int] = None
         bg_music_file = _get_background_music()
         has_bgm = bool(bg_music_file and bg_music_file.exists())
         if has_bgm:
-            cmd_inputs += ["-i", str(bg_music_file)]  # [4:a]
-            bgm_idx = 4
-            first_sub_idx = 5
-        else:
-            bgm_idx = None
-            first_sub_idx = 4
+            bgm_idx = len(input_files)
+            input_files.append(bg_music_file)
 
+        first_sub_idx = len(input_files)
         for st in subtitle_states:
-            cmd_inputs += ["-i", st["path"]]
+            input_files.append(Path(st["path"]))
 
-        # Video overlay chain: Gradient -> Top Badge -> Subtitle States
+        cmd_inputs: List[str] = []
+        for inp_f in input_files:
+            cmd_inputs += ["-i", str(inp_f)]
+
+        # Video overlay chain: Gradient -> Top Badge -> Source Attribution -> Subtitles -> Progress Bar
         filter_parts = [
             "[0:v][2:v]overlay=0:1920-650[v_grad]",
             "[v_grad][3:v]overlay=0:0[v_badge]",
         ]
         cur_v = "v_badge"
+
+        if attr_idx is not None:
+            filter_parts.append(f"[{cur_v}][{attr_idx}:v]overlay=0:0[v_attr]")
+            cur_v = "v_attr"
 
         sub_y = 1450
         for i, st in enumerate(subtitle_states):
@@ -386,7 +434,13 @@ def compose_news_reel(
             )
             cur_v = out_v
 
-        final_v_label = cur_v
+        # Animated progress bar at bottom edge (6px height, y=1904)
+        bar_w = REEL_WIDTH - 80
+        filter_parts.append(
+            f"[{cur_v}]drawbox=x=40:y=1904:w={bar_w}:h=6:color=white@0.3:t=fill,"
+            f"drawbox=x=40:y=1904:w='{bar_w}*t/{total_duration:.3f}':h=6:color=red@0.9:t=fill[v_pbar]"
+        )
+        final_v_label = "v_pbar"
 
         # Audio filter: Mix BGM at 12% if available
         if has_bgm:
@@ -461,3 +515,4 @@ def compose_news_reel(
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
             pass
+

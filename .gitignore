@@ -26,3 +26,7 @@ data/generated_reels/*
 .DS_Store
 Thumbs.db
 *.zip
+
+# Local isolated testing and prototyping sandbox
+sandbox/
+

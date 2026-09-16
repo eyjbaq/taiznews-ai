@@ -32,6 +32,7 @@ from app.processing.deduplicate import (
     deduplicate_articles,
     load_processed_urls,
 )
+import argparse
 from app.processing.normalize import normalize_articles
 from app.processing.relevance import filter_relevant
 from app.processing.history import get_recent_published_summary
@@ -42,6 +43,7 @@ from app.design.tts_generator import generate_news_audio
 from app.design.reel_maker import compose_news_reel
 from app.design.renderer import NewsCardRenderer
 from app.publisher.facebook import format_facebook_caption
+
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config" / "sources.yaml"
 LOGGER = logging.getLogger(__name__)
@@ -78,11 +80,11 @@ def score_article(article: Article) -> float:
     return score
 
 
-def run_reels_test() -> None:
+def run_reels_test(visual_mode: str = "image") -> None:
     """Run a local dry-run test of the full Reels pipeline for one article."""
 
     print("\n" + "=" * 70)
-    print("🎬 === TaizNews AI | News Reels Engine — اختبار محلي (Dry Run) === 🎬")
+    print(f"🎬 === TaizNews AI | News Reels Engine — اختبار محلي (النمط: {visual_mode}) === 🎬")
     print("=" * 70)
 
     # ─── Phase 1: News Collection ───
@@ -162,11 +164,15 @@ def run_reels_test() -> None:
     print("\n" + "-" * 55)
     print(f"✅ الخبر معتمد تحريرياً!")
     print(f"📰 العنوان: {post.headline}")
-    print(f"📝 المتن: {post.body}")
+    display_content = post.clean_content or post.body
+    print(f"📝 المتن المقروء (clean_content): {display_content}")
+    print(f"🎙️ المتن المشكول (vocalized_content): {post.vocalized_content[:80]}...")
     print(f"🏷️ الوسوم: {' '.join(post.hashtags)}")
+    if getattr(post, "video_keywords_en", None):
+        print(f"🎬 كلمات الفيديو الدلالية: {post.video_keywords_en}")
     print(f"📸 وصف الصورة (EN): {post.image_prompt_en}")
 
-    # ─── Phase 3a: Static News Card (existing) ───
+    # ─── Phase 3a: Static News Card ───
     print(f"\n🖼️ المرحلة 3a: تصميم البطاقة الإخبارية الثابتة...")
     card_renderer = NewsCardRenderer()
     try:
@@ -176,17 +182,37 @@ def run_reels_test() -> None:
         print(f"⚠️ تعذر تصميم البطاقة: {e}")
         card_path = None
 
-    # ─── Phase 3b: Multi-Scene AI Images (Storyboarding) ───
-    print(f"\n🎨 المرحلة 3b: توليد مشاهد القصة البصرية عبر Pollinations Flux...")
+    # ─── Phase 3b: TTS Narration + Word Timestamps ───
+    print(f"\n🎙️ المرحلة 3b: توليد التعليق الصوتي وتوقيت الكلمات...")
+    narration_text = (
+        getattr(post, "clean_content", "")
+        or getattr(post, "body", "")
+        or getattr(post, "vocalized_content", "")
+    ).strip()
+    if not narration_text:
+        narration_text = f"{post.headline}. {post.body}"
+    audio_path, word_timestamps = generate_news_audio(
+        text=narration_text,
+        slug=f"reel_tts_{target_article.id[:8]}",
+    )
+
+    if not audio_path:
+        print("❌ تعذر توليد الصوت. إيقاف مسار الريلز.")
+        return
+
+    # ─── Phase 3c: Visual Source & Reel Video Composition ───
+    reel_path = None
+    print(f"\n🎨 المرحلة 3c: توليد مشاهد القصة البصرية عبر Cloudflare AI وبديل Pollinations...")
     prompts = post.image_prompts_en if hasattr(post, "image_prompts_en") and post.image_prompts_en else []
     if not prompts and post.image_prompt_en:
         prompts = [post.image_prompt_en]
     if not prompts:
         prompts = [
-            f"Establishing wide shot of Yemeni mountain city Taiz {post.category}, ancient stone houses, dramatic clouds, cinematic lighting, 8k",
-            f"Photojournalism of armed military technical pickup truck on rugged mountain road in Taiz Yemen, distant smoke, 35mm lens",
-            f"Yemeni soldiers in uniform scanning the horizon from rocky ridge overlooking Taiz valley, dramatic natural lighting",
-            f"Scenic golden hour view over Mount Sabir ridges in Taiz Yemen, cinematic documentary photojournalism",
+            f"Dramatic wide shot of heavy smoke rising from military clashes near Yemeni city Taiz, armored vehicles on dusty road, AP photojournalism, 35mm lens, natural harsh daylight",
+            f"Military technical pickup truck with mounted heavy machine gun racing on mountain road in Taiz Yemen, soldiers aboard, dust cloud, Reuters war photography",
+            f"Ground level close-up of battle aftermath on a Yemeni street in Taiz, shell casings scattered, damaged concrete wall with bullet holes, gritty photojournalism",
+            f"Yemeni civilians fleeing with belongings through a damaged narrow street in Taiz, ambulance in background, chaotic atmosphere, documentary photography",
+            f"Aftermath scene of military checkpoint in Taiz Yemen, armored vehicle parked near damaged building, soldiers standing guard, cautious calm, no sunset",
         ]
 
     scene_images = generate_ai_images(
@@ -198,28 +224,15 @@ def run_reels_test() -> None:
         print("❌ تعذر توليد صور المشاهد. إيقاف مسار الريلز.")
         return
 
-    # ─── Phase 3c: TTS Narration + Word Timestamps ───
-    print(f"\n🎙️ المرحلة 3c: توليد التعليق الصوتي وتوقيت الكلمات...")
-    first_para = post.body.split("\n\n")[0].strip()
-    narration_text = f"{post.headline}. {first_para}"
-    audio_path, word_timestamps = generate_news_audio(
-        text=narration_text,
-        slug=f"reel_tts_{target_article.id[:8]}",
-    )
-
-    if not audio_path:
-        print("❌ تعذر توليد الصوت. إيقاف مسار الريلز.")
-        return
-
-    # ─── Phase 3d: Reel Video Composition ───
-    print(f"\n🎬 المرحلة 3d: تركيب مقطع الريلز المتكامل (مشاهد + صوت + كاريوكي)...")
+    print(f"\n🎬 تركيب مقطع الريلز المتكامل عبر صور AI وحركة Ken Burns...")
     reel_path = compose_news_reel(
         image_paths=scene_images,
         audio_path=audio_path,
         word_timestamps=word_timestamps,
         headline=post.headline,
         category=post.category,
-        slug=f"reel_{target_article.id[:8]}",
+        source_attribution=getattr(post, "source_attribution", "") or (target_article.source if target_article else ""),
+        slug=f"reel_image_{target_article.id[:8]}",
     )
 
     # ─── Final Summary ───
@@ -227,22 +240,16 @@ def run_reels_test() -> None:
     print("📊 === ملخص اختبار محرك الريلز الإخباري ===")
     print("=" * 70)
     print(f"📰 الخبر: {post.headline}")
-    print(f"📝 المتن: {post.body[:100]}...")
+    print(f"📝 المتن: {display_content[:100]}...")
     print(f"📸 وصف الصورة: {post.image_prompt_en[:80]}...")
 
     if card_path:
-        print(f"\n🖼️ بطاقة الخبر الثابتة:")
-        print(f"   {card_path}")
+        print(f"\n🖼️ بطاقة الخبر الثابتة:\n   {card_path}")
 
-    print(f"\n🎨 صورة خلفية AI:")
-    print(f"   {ai_image_path}")
-
-    print(f"\n🎙️ التعليق الصوتي:")
-    print(f"   {audio_path}")
+    print(f"\n🎙️ التعليق الصوتي:\n   {audio_path}")
 
     if reel_path:
-        print(f"\n🎬 مقطع الريلز النهائي:")
-        print(f"   {reel_path}")
+        print(f"\n🎬 مقطع الريلز النهائي ({visual_mode}):\n   {reel_path}")
         print(f"\n🎉 ✅ نجح الاختبار بالكامل! يمكنك فتح ملف الفيديو ومشاهدته محلياً.")
     else:
         print(f"\n❌ فشل تركيب مقطع الريلز.")
@@ -257,8 +264,18 @@ def main() -> None:
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
-    run_reels_test()
+
+    parser = argparse.ArgumentParser(description="Test TaizNews Reels Engine locally")
+    parser.add_argument(
+        "--visual-mode",
+        choices=["image", "video"],
+        default=os.getenv("VISUAL_MODE", "image"),
+        help="Visual mode: 'image' (default) or 'video' (Pexels B-Roll)",
+    )
+    args = parser.parse_args()
+    run_reels_test(visual_mode=args.visual_mode)
 
 
 if __name__ == "__main__":
     main()
+

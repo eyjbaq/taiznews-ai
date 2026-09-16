@@ -1,27 +1,106 @@
-"""Text-to-Speech engine using Microsoft Edge TTS for Arabic news narration.
+"""Text-to-Speech engine using ElevenLabs API with seamless Edge-TTS Smart Fallback.
 
-Converts editorial post body text into a high-quality Arabic .mp3 audio file
-using the edge-tts library (free, no API key required).
+Primary Engine:
+  - ElevenLabs REST API (eleven_multilingual_v2) for hyper-realistic Arabic broadcast anchor voices.
+  - Authorized voices: EUojVLG1QfxaqqH4ce6s, QRq5hPRAKf5ZhSlTBH6r (with auto-fallback to premade voices).
+Fallback Engine:
+  - Microsoft Edge TTS (free, no API key required) using ar-SA-HamedNeural.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import os
+import random
+import re
+import subprocess
+import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-import os
-from pathlib import Path
-from typing import Optional
+import requests
+from dotenv import load_dotenv
 
+# Windows console encoding
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+load_dotenv()
 LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "generated_audio"
 
-# Arabic news broadcast voices
+# ElevenLabs configuration
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+AUTHORIZED_VOICE_IDS = [
+    os.getenv("ELEVENLABS_VOICE_ID_1", "EUojVLG1QfxaqqH4ce6s"),
+    os.getenv("ELEVENLABS_VOICE_ID_2", "QRq5hPRAKf5ZhSlTBH6r"),
+]
+PREMADE_FALLBACK_MALE = "pNInz6obpgDQGcFmaJgB"    # Adam - deep authoritative male
+PREMADE_FALLBACK_FEMALE = "21m00Tcm4TlvDq8ikWAM"  # Rachel - clear broadcast female
+
+# Voice alternation state file
+_VOICE_STATE_FILE = BASE_DIR / "data" / "voice_state.json"
+
+
+def _get_last_voice_id() -> Optional[str]:
+    """Retrieve the last used voice ID from state file."""
+    try:
+        if _VOICE_STATE_FILE.exists():
+            import json
+            data = json.loads(_VOICE_STATE_FILE.read_text(encoding="utf-8"))
+            return data.get("last_voice_id")
+    except Exception:
+        pass
+    return None
+
+
+def _get_next_voice() -> str:
+    """Alternate between authorized voices (male/female) using a persistent state file.
+
+    Each call returns the OPPOSITE voice from last time, ensuring variety across runs.
+    """
+    import json
+
+    last_used = None
+    try:
+        if _VOICE_STATE_FILE.exists():
+            data = json.loads(_VOICE_STATE_FILE.read_text(encoding="utf-8"))
+            last_used = data.get("last_voice_id")
+    except Exception:
+        pass
+
+    # Pick the other voice (alternate), or first voice if no state exists
+    if last_used == AUTHORIZED_VOICE_IDS[0]:
+        next_voice = AUTHORIZED_VOICE_IDS[1]
+    else:
+        next_voice = AUTHORIZED_VOICE_IDS[0]
+
+    # Save state
+    try:
+        _VOICE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _VOICE_STATE_FILE.write_text(
+            json.dumps({"last_voice_id": next_voice}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    return next_voice
+
+# Edge-TTS Arabic broadcast voices
 ARABIC_VOICES = [
     "ar-SA-HamedNeural",      # Saudi male - authoritative, deep broadcast anchor
     "ar-YE-SalehNeural",      # Yemeni male - authentic Yemeni news presenter
@@ -30,30 +109,209 @@ ARABIC_VOICES = [
     "ar-YE-MaryamNeural",     # Yemeni female - clear news presenter
     "ar-SA-ZariyahNeural",    # Saudi female - smooth broadcast tone
 ]
+DEFAULT_EDGE_VOICE = os.getenv("TTS_VOICE", ARABIC_VOICES[0])
 
-DEFAULT_VOICE = os.getenv("TTS_VOICE", ARABIC_VOICES[0])
+
+def _clean_word_for_subtitles(word: str) -> str:
+    """Remove Arabic diacritics (tashkeel) and punctuation from a word."""
+    cleaned = re.sub(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]", "", word)
+    return cleaned.strip(" \t\n\r،.؟!-:;()[]\"'")
+
+
+def _get_audio_duration_ffprobe(audio_path: Path | str) -> float:
+    """Retrieve audio duration in seconds using ffprobe."""
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(audio_path),
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(res.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def _generate_linear_word_timestamps(text: str, duration: float) -> list[dict[str, Any]]:
+    """Evenly distribute words across the audio duration for clean subtitle sync."""
+    words = [w for w in text.strip().split() if w]
+    if not words or duration <= 0:
+        return []
+
+    total_words = len(words)
+    pad_start = 0.15
+    usable_duration = max(duration - 0.3, 0.5)
+    word_duration = usable_duration / total_words
+
+    timestamps: list[dict[str, Any]] = []
+    for i, w in enumerate(words):
+        start = pad_start + (i * word_duration)
+        end = start + word_duration
+        cleaned = _clean_word_for_subtitles(w)
+        timestamps.append({
+            "text": cleaned or w,
+            "start": round(start, 3),
+            "end": round(end, 3),
+        })
+    return timestamps
+
+
+def _extract_words_from_alignment(alignment: dict[str, Any], raw_text: str) -> list[dict[str, Any]]:
+    """Extract word-level timestamps from ElevenLabs character-level alignment."""
+    chars = alignment.get("characters", [])
+    starts = alignment.get("character_start_times_seconds", [])
+    ends = alignment.get("character_end_times_seconds", [])
+
+    if not chars or not starts or not ends:
+        return []
+
+    words_from_text = [w for w in raw_text.strip().split() if w]
+    char_words: list[dict[str, Any]] = []
+    curr_chars: list[str] = []
+    word_start: float | None = None
+    prev_end: float = 0.0
+
+    for c, s, e in zip(chars, starts, ends):
+        if c.isspace():
+            if curr_chars:
+                char_words.append({
+                    "start": round(word_start if word_start is not None else s, 3),
+                    "end": round(prev_end, 3),
+                })
+                curr_chars = []
+                word_start = None
+        else:
+            if word_start is None:
+                word_start = s
+            curr_chars.append(c)
+            prev_end = e
+
+    if curr_chars:
+        char_words.append({
+            "start": round(word_start if word_start is not None else 0.0, 3),
+            "end": round(prev_end, 3),
+        })
+
+    result: list[dict[str, Any]] = []
+    for i, w in enumerate(words_from_text):
+        if i < len(char_words):
+            s_time = char_words[i]["start"]
+            e_time = char_words[i]["end"]
+        else:
+            prev_e = result[-1]["end"] if result else 0.0
+            s_time = prev_e
+            e_time = prev_e + 0.35
+
+        result.append({
+            "text": _clean_word_for_subtitles(w) or w,
+            "start": s_time,
+            "end": e_time,
+        })
+    return result
+
+
+def _generate_tts_elevenlabs(
+    text: str,
+    output_path: Path,
+    voice_id: Optional[str] = None,
+    timeout: int = 40,
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Generate audio via ElevenLabs REST API with automatic premade voice fallback."""
+    api_key = os.getenv("ELEVENLABS_API_KEY", ELEVENLABS_API_KEY)
+    if not api_key:
+        return False, []
+
+    selected_voice = voice_id or _get_next_voice()
+    voice_label = "👨 ذكر" if selected_voice == AUTHORIZED_VOICE_IDS[0] else "👩 أنثى"
+    print(f"🎤 المذيع المختار لهذا الريلز: {voice_label} ({selected_voice[:8]}...)")
+    headers = {
+        "xi-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.65,
+            "similarity_boost": 0.80,
+            "style": 0.15,
+        },
+        "speed": 0.85,
+    }
+
+    current_voice = selected_voice
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{current_voice}/with-timestamps"
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+
+        # Graceful fallback: If library voice requires paid subscription (402), use premade voice with same gender
+        if resp.status_code == 402:
+            is_female = (selected_voice == AUTHORIZED_VOICE_IDS[1])
+            current_voice = PREMADE_FALLBACK_FEMALE if is_female else PREMADE_FALLBACK_MALE
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{current_voice}/with-timestamps"
+            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+
+        if resp.status_code != 200:
+            # Fallback to standard endpoint if with-timestamps is unavailable
+            std_url = f"https://api.elevenlabs.io/v1/text-to-speech/{current_voice}"
+            resp = requests.post(std_url, headers=headers, json=payload, timeout=timeout)
+
+        if resp.status_code != 200:
+            LOGGER.warning("ElevenLabs API returned HTTP %d: %s", resp.status_code, resp.text[:200])
+            return False, []
+
+        content_type = resp.headers.get("content-type", "")
+        word_timestamps: list[dict[str, Any]] = []
+
+        if "application/json" in content_type:
+            data = resp.json()
+            b64_audio = data.get("audio_base64", "")
+            if b64_audio:
+                with open(output_path, "wb") as f:
+                    f.write(base64.b64decode(b64_audio))
+            alignment = data.get("alignment", {})
+            if alignment:
+                word_timestamps = _extract_words_from_alignment(alignment, text)
+        else:
+            with open(output_path, "wb") as f:
+                f.write(resp.content)
+
+        if not output_path.exists() or output_path.stat().st_size < 1000:
+            return False, []
+
+        duration = _get_audio_duration_ffprobe(output_path)
+        if not word_timestamps and duration > 0:
+            word_timestamps = _generate_linear_word_timestamps(text, duration)
+
+        return True, word_timestamps
+
+    except Exception as exc:
+        LOGGER.warning("ElevenLabs generation error: %s", exc)
+        return False, []
 
 
 def _get_event_loop() -> asyncio.AbstractEventLoop:
     """Get or create an event loop that works in all contexts."""
     try:
-        loop = asyncio.get_running_loop()
-        return loop
+        return asyncio.get_running_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         return loop
 
 
-async def _generate_tts_async(
+async def _generate_tts_edge_async(
     text: str,
     output_path: str,
-    voice: str = DEFAULT_VOICE,
+    voice: str = DEFAULT_EDGE_VOICE,
     rate: str = "+2%",
     pitch: str = "-2Hz",
     volume: str = "+15%",
 ) -> tuple[bool, list[dict[str, Any]]]:
-    """Internal async function to stream TTS audio and capture word timestamps."""
+    """Internal async function to stream Edge-TTS audio and capture word timestamps."""
     try:
         import edge_tts
 
@@ -71,10 +329,11 @@ async def _generate_tts_async(
                 if chunk["type"] == "audio":
                     f.write(chunk["data"])
                 elif chunk["type"] == "WordBoundary":
+                    clean_word = _clean_word_for_subtitles(chunk["text"])
                     words.append({
-                        "start": chunk["offset"] / 10_000_000,
-                        "end": (chunk["offset"] + chunk["duration"]) / 10_000_000,
-                        "text": chunk["text"],
+                        "start": round(chunk["offset"] / 10_000_000, 3),
+                        "end": round((chunk["offset"] + chunk["duration"]) / 10_000_000, 3),
+                        "text": clean_word or chunk["text"],
                     })
         return True, words
     except Exception as exc:
@@ -82,32 +341,36 @@ async def _generate_tts_async(
         return False, []
 
 
+def _run_async_edge_tts(
+    text: str, output_path: str, voice: str, rate: str, pitch: str, volume: str = "+15%"
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Helper to run async Edge-TTS in a new event loop."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(
+            _generate_tts_edge_async(text, output_path, voice, rate, pitch, volume)
+        )
+    finally:
+        loop.close()
+
+
 def generate_news_audio(
     text: str,
     output_dir: Path | str | None = None,
-    voice: str = DEFAULT_VOICE,
+    voice: str = DEFAULT_EDGE_VOICE,
     slug: str = "news_tts",
     rate: str = "+2%",
     pitch: str = "-2Hz",
     volume: str = "+15%",
 ) -> tuple[Optional[str], list[dict[str, Any]]]:
-    """Generate Arabic TTS audio and word timestamps for synchronized subtitle animation.
+    """Generate Arabic TTS audio and word timestamps using ElevenLabs with automatic Edge-TTS fallback.
 
-    Args:
-        text: The Arabic news text to narrate.
-        output_dir: Output directory.
-        voice: Voice name.
-        slug: Filename prefix.
-        rate: Speech rate adjustment.
-        pitch: Pitch adjustment.
-        volume: Volume adjustment.
-
-    Returns:
-        Tuple of (audio_file_path, list of word timestamp dicts).
+    Pipeline:
+      1. Primary: ElevenLabs REST API (eleven_multilingual_v2) for realistic broadcast voice.
+      2. Fallback: Edge-TTS (ar-SA-HamedNeural) when ElevenLabs key is missing, exhausted, or fails.
     """
     if not text or not text.strip():
         LOGGER.warning("Empty text provided for TTS generation.")
-        print("⚠️ لم يتم توفير نص للتحويل الصوتي.")
         return None, []
 
     out_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
@@ -115,91 +378,56 @@ def generate_news_audio(
 
     timestamp = int(time.time())
     output_file = out_dir / f"{slug}_{timestamp}.mp3"
-
-    print(f"🎙️ جاري توليد التعليق الصوتي وتوقيت الكلمات بصوت [{voice}]...")
-
-    # Clean the text for better narration
     clean_text = _prepare_text_for_narration(text)
-    word_timestamps: list[dict[str, Any]] = []
-    success = False
 
-    # Run the async TTS generation
+    # 1. Primary Engine: ElevenLabs REST API
+    print(f"🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك ElevenLabs API...")
+    success, word_timestamps = _generate_tts_elevenlabs(clean_text, output_file)
+
+    if success and output_file.exists() and output_file.stat().st_size > 1000:
+        file_size_kb = output_file.stat().st_size / 1024
+        print(f"✅ تم توليد التعليق الصوتي عبر ElevenLabs بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
+        return str(output_file), word_timestamps
+
+    # 2. Fallback Engine: Microsoft Edge-TTS
+    print(f"🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs (أو نفاد الرصيد)، جاري التبديل للمحرك الأصلي (Edge-TTS)...")
+    last_voice = _get_last_voice_id()
+    if last_voice == AUTHORIZED_VOICE_IDS[1]:
+        edge_voice = "ar-YE-MaryamNeural"
+        print(f"🎤 [Edge-TTS البديل] مذيعة: مريم (ar-YE-MaryamNeural)")
+    else:
+        edge_voice = voice or DEFAULT_EDGE_VOICE
+        print(f"🎤 [Edge-TTS البديل] مذيع: حامد ({edge_voice})")
+
     try:
         loop = _get_event_loop()
         if loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(_run_async_tts, clean_text, str(output_file), voice, rate, pitch, volume)
+                future = pool.submit(_run_async_edge_tts, clean_text, str(output_file), edge_voice, rate, pitch, volume)
                 success, word_timestamps = future.result(timeout=60)
         else:
             success, word_timestamps = loop.run_until_complete(
-                _generate_tts_async(clean_text, str(output_file), voice, rate, pitch, volume)
+                _generate_tts_edge_async(clean_text, str(output_file), edge_voice, rate, pitch, volume)
             )
     except Exception as exc:
-        LOGGER.error("TTS generation failed: %s", exc)
-        print(f"❌ فشل التوليد الصوتي: {exc}")
+        LOGGER.error("Edge-TTS generation failed: %s", exc)
         return None, []
 
     if success and output_file.exists() and output_file.stat().st_size > 1000:
         file_size_kb = output_file.stat().st_size / 1024
-        print(f"✅ تم توليد التعليق الصوتي ({file_size_kb:.0f} KB) وتحديد توقيت {len(word_timestamps)} كلمة بنجاح!")
+        print(f"✅ تم توليد التعليق الصوتي عبر المحرك الاحتياطي Edge-TTS ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة.")
         return str(output_file), word_timestamps
-    else:
-        print("❌ فشل في توليد ملف صوتي صالح.")
-        # Try fallback voices
-        for fallback_voice in ARABIC_VOICES:
-            if fallback_voice == voice:
-                continue
-            print(f"🔄 تجربة صوت بديل: [{fallback_voice}]...")
-            try:
-                loop = _get_event_loop()
-                if loop.is_running():
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        future = pool.submit(_run_async_tts, clean_text, str(output_file), fallback_voice, rate, pitch, volume)
-                        success, word_timestamps = future.result(timeout=60)
-                else:
-                    success, word_timestamps = loop.run_until_complete(
-                        _generate_tts_async(clean_text, str(output_file), fallback_voice, rate, pitch, volume)
-                    )
-                if success and output_file.exists() and output_file.stat().st_size > 1000:
-                    file_size_kb = output_file.stat().st_size / 1024
-                    print(f"✅ تم توليد التعليق الصوتي بالصوت البديل ({file_size_kb:.0f} KB) وتوقيت {len(word_timestamps)} كلمة.")
-                    return str(output_file), word_timestamps
-            except Exception:
-                continue
 
-        print("❌ تعذر توليد التعليق الصوتي بجميع الأصوات المتاحة.")
-        return None, []
-
-
-def _run_async_tts(
-    text: str, output_path: str, voice: str, rate: str, pitch: str, volume: str = "+15%"
-) -> tuple[bool, list[dict[str, Any]]]:
-    """Helper to run async TTS in a new event loop (for thread execution)."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(
-            _generate_tts_async(text, output_path, voice, rate, pitch, volume)
-        )
-    finally:
-        loop.close()
-
+    print("❌ تعذر توليد التعليق الصوتي عبر جميع المحركات.")
+    return None, []
 
 
 def _prepare_text_for_narration(text: str) -> str:
     """Clean and prepare Arabic text for natural TTS narration."""
-    import re
-
     clean = text.strip()
-
-    # Remove hashtags
     clean = re.sub(r"#\S+", "", clean)
-
-    # Remove URLs
     clean = re.sub(r"https?://\S+", "", clean)
-
-    # Remove emoji
     clean = re.sub(
         r"[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
         r"\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U0001F900-\U0001F9FF"
@@ -208,12 +436,5 @@ def _prepare_text_for_narration(text: str) -> str:
         "",
         clean,
     )
-
-    # Collapse multiple spaces and newlines
     clean = re.sub(r"\s+", " ", clean).strip()
-
-    # Add slight pause markers for better narration flow
-    clean = clean.replace(".", ".\n")
-    clean = clean.replace("،", "،\n")
-
     return clean
