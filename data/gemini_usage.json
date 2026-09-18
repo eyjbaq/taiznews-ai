@@ -1,16 +1,16 @@
 {
   "gemini-3.6-flash": {
+    "usage_count": 1,
+    "daily_limit": 20,
+    "first_request_at": "2026-09-18T20:50:46.144138+00:00",
+    "exhausted_at": null,
+    "exhausted_reason": null,
+    "last_request_at": "2026-09-18T20:50:46.144138+00:00"
+  },
+  "gemini-3.5-flash": {
     "usage_count": 0,
     "daily_limit": 20,
     "first_request_at": null,
-    "exhausted_at": null,
-    "exhausted_reason": null,
-    "last_request_at": "2026-09-17T21:15:55.253455+00:00"
-  },
-  "gemini-3.5-flash": {
-    "usage_count": 3,
-    "daily_limit": 20,
-    "first_request_at": "2026-09-17T14:51:54.097254+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
     "last_request_at": "2026-09-18T14:23:02.494147+00:00"
@@ -19,16 +19,16 @@
     "usage_count": 0,
     "daily_limit": 20,
     "first_request_at": null,
-    "exhausted_at": null,
-    "exhausted_reason": null
+    "exhausted_at": "2026-09-18T20:50:10.768871+00:00",
+    "exhausted_reason": "404 Model Not Found"
   },
   "gemini-3.5-flash-lite": {
-    "usage_count": 0,
+    "usage_count": 1,
     "daily_limit": 500,
-    "first_request_at": null,
+    "first_request_at": "2026-09-18T20:50:21.342431+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
-    "last_request_at": "2026-09-10T21:17:26.025618+00:00"
+    "last_request_at": "2026-09-18T20:50:21.342431+00:00"
   },
   "gemini-3.1-flash-lite": {
     "usage_count": 0,
