@@ -1,11 +1,11 @@
 {
   "gemini-3.6-flash": {
-    "usage_count": 2,
+    "usage_count": 3,
     "daily_limit": 20,
     "first_request_at": "2026-09-19T22:52:50.903899+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
-    "last_request_at": "2026-09-19T22:53:13.582369+00:00"
+    "last_request_at": "2026-09-20T14:11:11.901194+00:00"
   },
   "gemini-3.5-flash": {
     "usage_count": 0,
@@ -33,6 +33,21 @@
   "gemini-3.1-flash-lite": {
     "usage_count": 0,
     "daily_limit": 500,
+    "first_request_at": null,
+    "exhausted_at": null,
+    "exhausted_reason": null
+  },
+  "gemini-3.8-flash": {
+    "usage_count": 1,
+    "daily_limit": 20,
+    "first_request_at": "2026-09-20T14:08:54.419397+00:00",
+    "exhausted_at": null,
+    "exhausted_reason": null,
+    "last_request_at": "2026-09-20T14:08:54.419397+00:00"
+  },
+  "gemini-3.7-flash": {
+    "usage_count": 0,
+    "daily_limit": 20,
     "first_request_at": null,
     "exhausted_at": null,
     "exhausted_reason": null
