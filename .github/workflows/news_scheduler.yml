@@ -3,12 +3,13 @@ name: TaizNews AI Automated Newsroom
 on:
   workflow_dispatch:
   schedule:
-    # Runs 4 times daily at peak engagement times (Yemen Time UTC+3):
-    # - 10:00 UTC = 13:00 (1:00 PM الظهر)
-    # - 13:00 UTC = 16:00 (4:00 PM العصر)
-    # - 18:00 UTC = 21:00 (9:00 PM ليلاً)
-    # - 21:00 UTC = 00:00 (12:00 AM منتصف الليل)
-    - cron: '0 10,13,18,21 * * *'
+    # 3 scheduled runs daily at peak engagement times (Yemen Time UTC+3):
+    # 1. 2:30 PM (14:30 Yemen) -> 11:30 UTC
+    - cron: '30 11 * * *'
+    # 2. 4:30 PM (16:30 Yemen) -> 13:30 UTC (Moroccan Voice Slot)
+    - cron: '30 13 * * *'
+    # 3. 10:00 PM (22:00 Yemen) -> 19:00 UTC
+    - cron: '0 19 * * *'
 
 permissions:
   contents: write

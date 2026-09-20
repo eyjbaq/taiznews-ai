@@ -31,7 +31,7 @@ from app.design.renderer import NewsCardRenderer
 from app.design.ai_image import generate_ai_image, generate_ai_images
 from app.design.tts_generator import generate_news_audio
 from app.design.reel_maker import compose_news_reel
-from app.publisher.facebook import FacebookPublisher, format_facebook_caption
+from app.publisher.facebook import FacebookPublisher, format_facebook_caption, format_facebook_reel_caption
 
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config" / "sources.yaml"
@@ -109,6 +109,7 @@ def _create_reel_for_article(
     audio_path, word_timestamps = generate_news_audio(
         text=narration_text,
         slug=f"reel_tts_{(article.id if article else 'taiz')[:8]}",
+        vocalized_fallback_text=getattr(post, "vocalized_content", ""),
     )
     if not audio_path:
         LOGGER.error("Failed to generate TTS audio for reel: %s", article.title)
@@ -143,7 +144,7 @@ def _create_reel_for_article(
             word_timestamps=word_timestamps,
             headline=post.headline,
             category=post.category,
-            source_attribution=getattr(post, "source_attribution", "") or (article.source if article else ""),
+            source_attribution="",
             slug=f"reel_{(article.id if article else 'taiz')[:8]}",
         )
         if reel_path:
@@ -322,9 +323,10 @@ def run_pipeline(
                     print("🧪 [DRY RUN] تم تجاوز النشر على فيسبوك بنجاح.")
                     pub_result = {"id": f"dry_run_{int(time.time())}", "mode": "reel"}
                 elif reel_path:
+                    reel_caption = format_facebook_reel_caption(post, article)
                     pub_result = facebook_publisher.publish_reel(
                         video_path=reel_path,
-                        caption=caption,
+                        caption=reel_caption,
                         title=post.headline,
                     )
                 else:
@@ -361,7 +363,7 @@ def run_pipeline(
             article, post = editorial_posts[0]
             print("\n" + "=" * 55)
             print(f"🎬 [توليد ريلز إضافي] لم يتوفر خبر ثانٍ مؤهل، جاري تحويل الخبر الأول إلى مقطع ريلز فورياً...")
-            caption = format_facebook_caption(post, article)
+            reel_caption = format_facebook_reel_caption(post, article)
             reel_path = None
             try:
                 reel_path = _create_reel_for_article(post, article)
@@ -372,7 +374,7 @@ def run_pipeline(
                 elif reel_path:
                     pub_result = facebook_publisher.publish_reel(
                         video_path=reel_path,
-                        caption=caption,
+                        caption=reel_caption,
                         title=post.headline,
                     )
                 if pub_result:

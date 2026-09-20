@@ -51,6 +51,25 @@ AUTHORIZED_VOICE_IDS = [
 PREMADE_FALLBACK_MALE = "pNInz6obpgDQGcFmaJgB"    # Adam - deep authoritative male
 PREMADE_FALLBACK_FEMALE = "21m00Tcm4TlvDq8ikWAM"  # Rachel - clear broadcast female
 
+# Dedicated Moroccan Voice Configuration (Used once daily for the 4:30 PM Yemen / 13:30 UTC slot)
+MOROCCAN_VOICE_ID = "OfGMGmhShO8iL9jCkXy8"
+MOROCCAN_API_KEY = "sk_2087057eec282fbe9f08516ec51d6e29529283c6cb6b83ff"
+
+
+def is_moroccan_slot_time() -> bool:
+    """Check if the current run corresponds to the 4:30 PM Yemen time slot (16:30 Yemen = 13:30 UTC)."""
+    env_override = os.getenv("MOROCCAN_VOICE_SLOT", "").strip().lower()
+    if env_override in ("true", "1", "yes"):
+        return True
+    if env_override in ("false", "0", "no"):
+        return False
+
+    from datetime import datetime, timezone, timedelta
+    now_yemen = datetime.now(timezone(timedelta(hours=3)))
+    # 4:30 PM slot window (16:00 to 17:59 Yemen time)
+    return now_yemen.hour in (16, 17)
+
+
 # Voice alternation state file
 _VOICE_STATE_FILE = BASE_DIR / "data" / "voice_state.json"
 
@@ -293,6 +312,72 @@ def _generate_tts_elevenlabs(
         return False, []
 
 
+def _generate_tts_moroccan(
+    clean_text: str,
+    output_path: Path,
+    timeout: int = 35,
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Generate audio via ElevenLabs using dedicated Moroccan voice with default settings and unvocalized text.
+
+    Uses embedded MOROCCAN_API_KEY and MOROCCAN_VOICE_ID with official default settings.
+    If it fails for any reason (HTTP 402, 401, quota, timeout), gracefully returns (False, [])
+    so the pipeline can automatically fall back to standard voices with vocalized text.
+    """
+    headers = {
+        "xi-api-key": MOROCCAN_API_KEY,
+        "Content-Type": "application/json",
+    }
+    # Default settings as requested: no speed change, default stability and similarity
+    payload = {
+        "text": clean_text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.75,
+        },
+    }
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{MOROCCAN_VOICE_ID}/with-timestamps"
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code != 200:
+            std_url = f"https://api.elevenlabs.io/v1/text-to-speech/{MOROCCAN_VOICE_ID}"
+            resp = requests.post(std_url, headers=headers, json=payload, timeout=timeout)
+
+        if resp.status_code != 200:
+            LOGGER.warning("Moroccan voice API returned HTTP %d: %s", resp.status_code, resp.text[:200])
+            return False, []
+
+        content_type = resp.headers.get("content-type", "")
+        word_timestamps: list[dict[str, Any]] = []
+
+        if "application/json" in content_type:
+            data = resp.json()
+            b64_audio = data.get("audio_base64", "")
+            if b64_audio:
+                with open(output_path, "wb") as f:
+                    f.write(base64.b64decode(b64_audio))
+            alignment = data.get("alignment", {})
+            if alignment:
+                word_timestamps = _extract_words_from_alignment(alignment, clean_text)
+        else:
+            with open(output_path, "wb") as f:
+                f.write(resp.content)
+
+        if not output_path.exists() or output_path.stat().st_size < 1000:
+            return False, []
+
+        duration = _get_audio_duration_ffprobe(output_path)
+        if not word_timestamps and duration > 0:
+            word_timestamps = _generate_linear_word_timestamps(clean_text, duration)
+
+        return True, word_timestamps
+
+    except Exception as exc:
+        LOGGER.warning("Moroccan voice generation exception: %s", exc)
+        return False, []
+
+
 def _get_event_loop() -> asyncio.AbstractEventLoop:
     """Get or create an event loop that works in all contexts."""
     try:
@@ -362,12 +447,15 @@ def generate_news_audio(
     rate: str = "+2%",
     pitch: str = "-2Hz",
     volume: str = "+15%",
+    is_moroccan_slot: Optional[bool] = None,
+    vocalized_fallback_text: Optional[str] = None,
 ) -> tuple[Optional[str], list[dict[str, Any]]]:
     """Generate Arabic TTS audio and word timestamps using ElevenLabs with automatic Edge-TTS fallback.
 
     Pipeline:
+      0. Slot Check: At 4:30 PM Yemen time, attempt dedicated Moroccan voice (OfGMGmhS...) with unvocalized text.
       1. Primary: ElevenLabs REST API (eleven_multilingual_v2) for realistic broadcast voice.
-      2. Fallback: Edge-TTS (ar-SA-HamedNeural) when ElevenLabs key is missing, exhausted, or fails.
+      2. Fallback: Edge-TTS (ar-SA-HamedNeural / ar-YE-MaryamNeural) when ElevenLabs key is missing, exhausted, or fails.
     """
     if not text or not text.strip():
         LOGGER.warning("Empty text provided for TTS generation.")
@@ -379,6 +467,22 @@ def generate_news_audio(
     timestamp = int(time.time())
     output_file = out_dir / f"{slug}_{timestamp}.mp3"
     clean_text = _prepare_text_for_narration(text)
+
+    # 0. Check for dedicated Moroccan voice slot (4:30 PM Yemen time = 13:30 UTC)
+    use_moroccan = is_moroccan_slot if is_moroccan_slot is not None else is_moroccan_slot_time()
+    if use_moroccan:
+        print(f"🇲🇦 [موعد 4:30 عصراً] محاولة توليد التعليق الصوتي بالصوت المغربي المخصص ({MOROCCAN_VOICE_ID[:8]}...) بنص غير مشكول...")
+        # Strip all tashkeel / diacritics for Moroccan dialect voice
+        text_without_tashkeel = re.sub(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]", "", clean_text).strip()
+        success_m, word_timestamps_m = _generate_tts_moroccan(text_without_tashkeel, output_file)
+        if success_m and output_file.exists() and output_file.stat().st_size > 1000:
+            file_size_kb = output_file.stat().st_size / 1024
+            print(f"✅ تم توليد التعليق الصوتي بنجاح بالصوت المغربي ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps_m)} كلمة!")
+            return str(output_file), word_timestamps_m
+        else:
+            print("🔄 [التبديل التلقائي] تعذر التوليد عبر الصوت المغربي، الانتقال التلقائي للصوت الإخباري المعتمد بالنص المشكول...")
+            if vocalized_fallback_text and vocalized_fallback_text.strip():
+                clean_text = _prepare_text_for_narration(vocalized_fallback_text)
 
     # 1. Primary Engine: ElevenLabs REST API
     print(f"🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك ElevenLabs API...")
@@ -436,5 +540,9 @@ def _prepare_text_for_narration(text: str) -> str:
         "",
         clean,
     )
+    # Strip any source attribution phrases so news starts directly
+    clean = re.sub(r"نقلا[ً]? عن [^\s،.]+( [^\s،.]+)?", "", clean)
+    clean = re.sub(r"بحسب [^\s،.]+( [^\s،.]+)?", "", clean)
+    clean = re.sub(r"وفقا[ً]? ل[^\s،.]+( [^\s،.]+)?", "", clean)
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean

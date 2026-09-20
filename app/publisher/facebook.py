@@ -21,14 +21,89 @@ GRAPH_API_VERSION = "v19.0"
 
 def format_facebook_caption(post: EditorialPost, article: Optional[Article] = None) -> str:
     """Format the headline, body, and hashtags for Facebook without links or external attribution."""
+    import re
+    body = post.body.strip()
+    body = re.sub(r"نقلا[ً]? عن [^\s،.]+( [^\s،.]+)?", "", body)
+    body = re.sub(r"بحسب [^\s،.]+( [^\s،.]+)?", "", body)
+    body = re.sub(r"\s+", " ", body).strip()
     lines = [
         f"🔴 {post.headline.strip()}",
         "",
-        post.body.strip(),
+        body,
         "",
         " ".join(h.strip() for h in post.hashtags if h.strip()),
     ]
     return "\n".join(lines).strip()
+
+
+def format_facebook_reel_caption(post: EditorialPost, article: Optional[Article] = None) -> str:
+    """Format an engaging Facebook Reel caption strictly under 400 characters with viral hashtags.
+
+    Avoids repeating the entire spoken script, providing a punchy hook, teaser,
+    and high-impact hashtags for optimal algorithmic reach.
+    """
+    import re
+
+    headline = post.headline.strip()
+    headline = re.sub(r"^(🔴\s*)+", "", headline).strip()
+
+    # 1. Extract a concise, intriguing teaser (1 sentence) rather than the whole spoken body
+    body_text = (getattr(post, "clean_content", "") or getattr(post, "body", "")).strip()
+    body_text = re.sub(r"نقلا[ً]? عن [^\s،.]+( [^\s،.]+)?", "", body_text)
+    body_text = re.sub(r"بحسب [^\s،.]+( [^\s،.]+)?", "", body_text)
+    body_text = re.sub(r"\s+", " ", body_text).strip()
+
+    sentences = [s.strip() for s in body_text.replace("!", ".").replace("؟", ".").split(".") if len(s.strip()) > 10]
+    teaser = sentences[0] if sentences else ""
+
+    cta = "تابع التفاصيل الميدانية في الفيديو ⬇️"
+
+    # 2. Build high-impact hashtags
+    base_tags = ["#تعز", "#اليمن", "#أخبار_تعز", "#تعز_نيوز", "#Reels"]
+    post_tags = []
+    for h in post.hashtags:
+        clean_h = h.strip()
+        if not clean_h:
+            continue
+        if not clean_h.startswith("#"):
+            clean_h = f"#{clean_h}"
+        post_tags.append(clean_h)
+
+    all_tags = []
+    for tag in post_tags + base_tags:
+        if tag not in all_tags:
+            all_tags.append(tag)
+
+    hashtags_str = " ".join(all_tags)
+
+    if teaser and teaser.lower() in headline.lower():
+        teaser = ""
+
+    lines = [f"🔴 {headline}"]
+    if teaser:
+        lines.append(f"{teaser}.. {cta}")
+    else:
+        lines.append(cta)
+    lines.append("")
+    lines.append(hashtags_str)
+
+    caption = "\n".join(lines).strip()
+
+    # Prune hashtags if total length exceeds 385 characters
+    while len(caption) >= 385 and len(all_tags) > 3:
+        all_tags.pop()
+        hashtags_str = " ".join(all_tags)
+        lines[-1] = hashtags_str
+        caption = "\n".join(lines).strip()
+
+    # If still >= 395 chars, cleanly trim teaser
+    if len(caption) >= 395 and teaser:
+        over = len(caption) - 375
+        trimmed_teaser = teaser[:-over].rsplit(" ", 1)[0] + "..."
+        lines[1] = f"{trimmed_teaser}.. {cta}"
+        caption = "\n".join(lines).strip()
+
+    return caption
 
 
 class FacebookPublisher:
