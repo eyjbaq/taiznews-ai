@@ -112,7 +112,7 @@ def build_editorial_prompt(article: Article, recent_posts_context: Optional[str]
     return prompt
 
 
-MAX_RETRIES_PER_MODEL = 3
+MAX_RETRIES_PER_MODEL = 2
 
 
 def process_article(
@@ -219,7 +219,7 @@ def process_article(
 
                     elif is_transient_error:
                         if attempt < MAX_RETRIES_PER_MODEL:
-                            backoff = 6 * attempt
+                            backoff = 4 * attempt
                             print(
                                 f"⏳ ضغط مؤقت على خوادم Google للنموذج [{target_model}] (503 High Demand / Spikes in demand)."
                             )
