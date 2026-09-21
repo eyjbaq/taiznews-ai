@@ -122,15 +122,13 @@ def _get_next_voice() -> str:
 # Edge-TTS Arabic broadcast voices
 ARABIC_VOICES = [
     "ar-BH-AliNeural",        # Bahraini male - authoritative, broadcast anchor (Ali from Bahrain)
-    "ar-YE-MaryamNeural",     # Yemeni female - authentic Yemeni news presenter (Maryam from Yemen)
-    "ar-QA-AmalNeural",       # Qatari female - smooth broadcast tone (Amal from Qatar)
     "ar-YE-SalehNeural",      # Yemeni male - authentic Yemeni news presenter
     "ar-AE-HamdanNeural",     # Emirati male - confident and crisp
     "ar-EG-ShakirNeural",     # Egyptian male - professional broadcaster
-    "ar-SA-HamedNeural",      # Saudi male
-    "ar-SA-ZariyahNeural",    # Saudi female
+    "ar-YE-MaryamNeural",     # Yemeni female - clear news presenter
+    "ar-SA-ZariyahNeural",    # Saudi female - smooth broadcast tone
 ]
-DEFAULT_EDGE_VOICE = os.getenv("TTS_VOICE", "ar-BH-AliNeural")
+DEFAULT_EDGE_VOICE = os.getenv("TTS_VOICE", ARABIC_VOICES[0])
 
 
 def _clean_word_for_subtitles(word: str) -> str:
@@ -473,7 +471,7 @@ def generate_news_audio(
     # 0. Check for dedicated Moroccan voice slot (4:30 PM Yemen time = 13:30 UTC)
     use_moroccan = is_moroccan_slot if is_moroccan_slot is not None else is_moroccan_slot_time()
     if use_moroccan:
-        print(f"🇲🇦 [موعد 4:30 عصراً] [المحاولة 1] تجربة الصوت المغربي المخصص ({MOROCCAN_VOICE_ID[:8]}...) بنص غير مشكول...")
+        print(f"🇲🇦 [موعد 4:30 عصراً] محاولة توليد التعليق الصوتي بالصوت المغربي المخصص ({MOROCCAN_VOICE_ID[:8]}...) بنص غير مشكول...")
         # Strip all tashkeel / diacritics for Moroccan dialect voice
         text_without_tashkeel = re.sub(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]", "", clean_text).strip()
         success_m, word_timestamps_m = _generate_tts_moroccan(text_without_tashkeel, output_file)
@@ -481,39 +479,12 @@ def generate_news_audio(
             file_size_kb = output_file.stat().st_size / 1024
             print(f"✅ تم توليد التعليق الصوتي بنجاح بالصوت المغربي ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps_m)} كلمة!")
             return str(output_file), word_timestamps_m
+        else:
+            print("🔄 [التبديل التلقائي] تعذر التوليد عبر الصوت المغربي، الانتقال التلقائي للصوت الإخباري المعتمد بالنص المشكول...")
+            if vocalized_fallback_text and vocalized_fallback_text.strip():
+                clean_text = _prepare_text_for_narration(vocalized_fallback_text)
 
-        # Step 2: Fallback to Voice ID EUojVLG1QfxaqqH4ce6s via ElevenLabs
-        print(f"🔄 [التبديل التلقائي 1] تعذر الصوت المغربي، تجربة المعرف البديل (EUojVLG1QfxaqqH4ce6s)...")
-        if vocalized_fallback_text and vocalized_fallback_text.strip():
-            clean_text = _prepare_text_for_narration(vocalized_fallback_text)
-
-        success_euoj, word_timestamps_euoj = _generate_tts_elevenlabs(clean_text, output_file, voice_id="EUojVLG1QfxaqqH4ce6s")
-        if success_euoj and output_file.exists() and output_file.stat().st_size > 1000:
-            file_size_kb = output_file.stat().st_size / 1024
-            print(f"✅ تم توليد التعليق الصوتي بنجاح عبر المعرف EUojVLG1 ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps_euoj)} كلمة!")
-            return str(output_file), word_timestamps_euoj
-
-        # Step 3: Fallback to Amal from Qatar (ar-QA-AmalNeural) via Edge-TTS
-        print(f"🔄 [التبديل التلقائي 2] تعذر المعرف EUojVLG1، التبديل إلى صوت المذيعة أمل من قطر (ar-QA-AmalNeural)...")
-        try:
-            loop = _get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(_run_async_edge_tts, clean_text, str(output_file), "ar-QA-AmalNeural", rate, pitch, volume)
-                    success_amal, word_timestamps_amal = future.result(timeout=60)
-            else:
-                success_amal, word_timestamps_amal = loop.run_until_complete(
-                    _generate_tts_edge_async(clean_text, str(output_file), "ar-QA-AmalNeural", rate, pitch, volume)
-                )
-            if success_amal and output_file.exists() and output_file.stat().st_size > 1000:
-                file_size_kb = output_file.stat().st_size / 1024
-                print(f"✅ تم توليد التعليق الصوتي عبر صوت أمل (قطر) بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps_amal)} كلمة!")
-                return str(output_file), word_timestamps_amal
-        except Exception as exc_amal:
-            LOGGER.error("Amal (Qatar) Edge-TTS failed: %s", exc_amal)
-
-    # 1. Primary Engine: ElevenLabs REST API (for regular runs)
+    # 1. Primary Engine: ElevenLabs REST API
     print(f"🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك ElevenLabs API...")
     success, word_timestamps = _generate_tts_elevenlabs(clean_text, output_file)
 
@@ -522,15 +493,15 @@ def generate_news_audio(
         print(f"✅ تم توليد التعليق الصوتي عبر ElevenLabs بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
         return str(output_file), word_timestamps
 
-    # 2. Fallback Engine: Microsoft Edge-TTS (Maryam from Yemen for female, Ali from Bahrain for male)
+    # 2. Fallback Engine: Microsoft Edge-TTS
     print(f"🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs (أو نفاد الرصيد)، جاري التبديل للمحرك الأصلي (Edge-TTS)...")
     last_voice = _get_last_voice_id()
     if last_voice == AUTHORIZED_VOICE_IDS[1]:
         edge_voice = "ar-YE-MaryamNeural"
-        print(f"🎤 [Edge-TTS البديل] مذيعة: مريم من اليمن (ar-YE-MaryamNeural)")
+        print(f"🎤 [Edge-TTS البديل] مذيعة: مريم (ar-YE-MaryamNeural)")
     else:
-        edge_voice = voice or "ar-BH-AliNeural"
-        print(f"🎤 [Edge-TTS البديل] مذيع: علي من البحرين ({edge_voice})")
+        edge_voice = voice or DEFAULT_EDGE_VOICE
+        print(f"🎤 [Edge-TTS البديل] مذيع: علي ({edge_voice})")
 
     try:
         loop = _get_event_loop()

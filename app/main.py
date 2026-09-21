@@ -96,11 +96,11 @@ def _create_reel_for_article(
     article: Article,
 ) -> Optional[str]:
     """Create a high-impact news reel using AI-generated storyboard images and Ken Burns motion."""
-    # 1. Prepare narration text: clean_content is ideal for ElevenLabs, while vocalized_content is available for Edge-TTS
+    # 1. Prepare narration text: vocalized_content ensures 100% accurate Arabic diacritics and pronunciation
     narration_text = (
-        getattr(post, "clean_content", "")
+        getattr(post, "vocalized_content", "")
+        or getattr(post, "clean_content", "")
         or getattr(post, "body", "")
-        or getattr(post, "vocalized_content", "")
     ).strip()
 
     if not narration_text:

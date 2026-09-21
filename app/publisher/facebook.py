@@ -26,12 +26,27 @@ def format_facebook_caption(post: EditorialPost, article: Optional[Article] = No
     body = re.sub(r"نقلا[ً]? عن [^\s،.]+( [^\s،.]+)?", "", body)
     body = re.sub(r"بحسب [^\s،.]+( [^\s،.]+)?", "", body)
     body = re.sub(r"\s+", " ", body).strip()
+
+    tags: list[str] = []
+    for h in post.hashtags:
+        clean_h = h.strip()
+        if not clean_h:
+            continue
+        if not clean_h.startswith("#"):
+            clean_h = f"#{clean_h}"
+        if clean_h not in tags:
+            tags.append(clean_h)
+
+    for core_tag in ["#تعز", "#تعز_نيوز", "#اليمن"]:
+        if core_tag not in tags:
+            tags.append(core_tag)
+
     lines = [
         f"🔴 {post.headline.strip()}",
         "",
         body,
         "",
-        " ".join(h.strip() for h in post.hashtags if h.strip()),
+        " ".join(tags),
     ]
     return "\n".join(lines).strip()
 

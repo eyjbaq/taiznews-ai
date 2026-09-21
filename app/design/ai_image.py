@@ -71,7 +71,7 @@ def _generate_via_cloudflare(
     output_file: Path,
     width: int = REEL_WIDTH,
     height: int = REEL_HEIGHT,
-    timeout: int = 45,
+    timeout: int = 30,
 ) -> bool:
     """Generate image via Cloudflare Workers AI REST API."""
     account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", CLOUDFLARE_ACCOUNT_ID)
@@ -159,8 +159,8 @@ def _generate_via_pollinations(
     output_file: Path,
     width: int = REEL_WIDTH,
     height: int = REEL_HEIGHT,
-    max_retries: int = 3,
-    timeout: int = 90,
+    max_retries: int = 2,
+    timeout: int = 40,
 ) -> bool:
     """Generate image via Pollinations.ai (Flux Engine) as reliable free fallback."""
     gen_width = int(width * SUPERSAMPLE_FACTOR)
@@ -172,7 +172,7 @@ def _generate_via_pollinations(
     for attempt in range(1, max_retries + 1):
         try:
             if attempt > 1:
-                time.sleep(4 * attempt)
+                time.sleep(2 * attempt)
 
             response = requests.get(url, timeout=timeout, stream=True)
             if response.status_code != 200 or len(response.content) < 5000:
@@ -197,8 +197,8 @@ def generate_ai_image(
     width: int = REEL_WIDTH,
     height: int = REEL_HEIGHT,
     slug: str = "reel_scene",
-    max_retries: int = 3,
-    timeout: int = 60,
+    max_retries: int = 2,
+    timeout: int = 30,
 ) -> str | None:
     """Generate a photojournalistic news image using Cloudflare Workers AI with automatic Pollinations fallback.
 
