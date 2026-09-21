@@ -18,18 +18,6 @@ DEFAULT_USAGE_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "g
 
 # Models and their official operational limits
 MODEL_SPECS: Dict[str, dict] = {
-    "gemini-3.8-flash": {
-        "daily_limit": 20,
-        "max_rpm": 3,
-        "min_interval": 20.0,
-        "is_lite": False,
-    },
-    "gemini-3.7-flash": {
-        "daily_limit": 20,
-        "max_rpm": 3,
-        "min_interval": 20.0,
-        "is_lite": False,
-    },
     "gemini-3.6-flash": {
         "daily_limit": 20,
         "max_rpm": 3,
