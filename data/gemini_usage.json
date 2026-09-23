@@ -1,19 +1,19 @@
 {
   "gemini-3.6-flash": {
-    "usage_count": 0,
+    "usage_count": 1,
     "daily_limit": 20,
-    "first_request_at": null,
+    "first_request_at": "2026-09-23T15:29:33.118229+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
-    "last_request_at": "2026-09-21T01:48:16.045464+00:00"
+    "last_request_at": "2026-09-23T15:29:33.118229+00:00"
   },
   "gemini-3.5-flash": {
-    "usage_count": 2,
+    "usage_count": 4,
     "daily_limit": 20,
     "first_request_at": "2026-09-23T13:50:08.985638+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
-    "last_request_at": "2026-09-23T13:53:15.262936+00:00"
+    "last_request_at": "2026-09-23T15:38:27.054206+00:00"
   },
   "gemini-2.5-flash": {
     "usage_count": 0,
@@ -23,17 +23,17 @@
     "exhausted_reason": null
   },
   "gemini-3.5-flash-lite": {
+    "usage_count": 1,
+    "daily_limit": 500,
+    "first_request_at": "2026-09-23T15:45:22.143333+00:00",
+    "exhausted_at": null,
+    "exhausted_reason": null,
+    "last_request_at": "2026-09-23T15:45:22.143333+00:00"
+  },
+  "gemini-3.1-flash-lite": {
     "usage_count": 0,
     "daily_limit": 500,
     "first_request_at": null,
-    "exhausted_at": null,
-    "exhausted_reason": null,
-    "last_request_at": "2026-09-22T22:03:34.883616+00:00"
-  },
-  "gemini-3.1-flash-lite": {
-    "usage_count": 1,
-    "daily_limit": 500,
-    "first_request_at": "2026-09-22T15:34:32.850995+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
     "last_request_at": "2026-09-22T15:34:32.850995+00:00"
