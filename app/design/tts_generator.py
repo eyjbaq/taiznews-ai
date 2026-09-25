@@ -1,10 +1,13 @@
 """Text-to-Speech engine using ElevenLabs API with seamless Edge-TTS Smart Fallback.
 
 Primary Engine:
-  - ElevenLabs REST API (eleven_multilingual_v2) for hyper-realistic Arabic broadcast anchor voices.
-  - Authorized voices: EUojVLG1QfxaqqH4ce6s, QRq5hPRAKf5ZhSlTBH6r (with auto-fallback to premade voices).
+  - ElevenLabs REST API (eleven_turbo_v2_5) for hyper-realistic Arabic broadcast anchor voices.
+  - Male rotation: Adam (pNInz6obpgDQGcFmaJgB) & Liam (TX3LPaxmHKxFdv7VOQHJ).
+  - Female voice: Sarah (EXAVITQu4vr4xnSDxMaL).
 Fallback Engine:
-  - Microsoft Edge TTS (free, no API key required) using ar-SA-HamedNeural.
+  - Microsoft Edge TTS (free, no API key required):
+    - Male: Jamal Moroccan Anchor (ar-MA-JamalNeural)
+    - Female: Maryam Yemeni Anchor (ar-YE-MaryamNeural)
 """
 
 from __future__ import annotations
@@ -44,80 +47,112 @@ DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "generated_audio"
 
 # ElevenLabs configuration
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-AUTHORIZED_VOICE_IDS = [
-    os.getenv("ELEVENLABS_VOICE_ID_1", "EUojVLG1QfxaqqH4ce6s"),
-    os.getenv("ELEVENLABS_VOICE_ID_2", "QRq5hPRAKf5ZhSlTBH6r"),
-]
-PREMADE_FALLBACK_MALE = "pNInz6obpgDQGcFmaJgB"    # Adam - deep authoritative male
-PREMADE_FALLBACK_FEMALE = "21m00Tcm4TlvDq8ikWAM"  # Rachel - clear broadcast female
 
-# Dedicated Moroccan Voice Configuration (Used once daily for the 4:30 PM Yemen / 13:30 UTC slot)
-MOROCCAN_VOICE_ID = "OfGMGmhShO8iL9jCkXy8"
-MOROCCAN_API_KEY = "sk_2087057eec282fbe9f08516ec51d6e29529283c6cb6b83ff"
+# Primary ElevenLabs Authorized Voices:
+# Male Voices: Adam and Liam (alternated for male turns)
+VOICE_MALE_ADAM = os.getenv("ELEVENLABS_VOICE_ADAM", "pNInz6obpgDQGcFmaJgB")
+VOICE_MALE_LIAM = os.getenv("ELEVENLABS_VOICE_LIAM", "TX3LPaxmHKxFdv7VOQHJ")
 
+# Female Voice: Sarah
+VOICE_FEMALE_SARAH = os.getenv("ELEVENLABS_VOICE_SARAH", "EXAVITQu4vr4xnSDxMaL")
 
-def is_moroccan_slot_time() -> bool:
-    """Check if the current run corresponds to the 4:30 PM Yemen time slot (16:30 Yemen = 13:30 UTC)."""
-    env_override = os.getenv("MOROCCAN_VOICE_SLOT", "").strip().lower()
-    if env_override in ("true", "1", "yes"):
-        return True
-    if env_override in ("false", "0", "no"):
-        return False
+AUTHORIZED_VOICE_IDS = [VOICE_MALE_ADAM, VOICE_FEMALE_SARAH]
+MALE_VOICE_IDS = [VOICE_MALE_ADAM, VOICE_MALE_LIAM]
 
-    from datetime import datetime, timezone, timedelta
-    now_yemen = datetime.now(timezone(timedelta(hours=3)))
-    # 4:30 PM slot window (16:00 to 17:59 Yemen time)
-    return now_yemen.hour in (16, 17)
+# Primary Model: eleven_turbo_v2_5 (50% cheaper credits, fast generation)
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
 
+# Edge-TTS Fallback Voices
+EDGE_VOICE_MALE = "ar-MA-JamalNeural"      # Jamal - Moroccan male news presenter
+EDGE_VOICE_FEMALE = "ar-YE-MaryamNeural"   # Maryam - Yemeni female news presenter
+DEFAULT_EDGE_VOICE = os.getenv("TTS_VOICE", EDGE_VOICE_MALE)
 
 # Voice alternation state file
 _VOICE_STATE_FILE = BASE_DIR / "data" / "voice_state.json"
 
 
-def _get_last_voice_id() -> Optional[str]:
-    """Retrieve the last used voice ID from state file."""
+def _read_voice_state() -> dict[str, Any]:
+    """Read persistent voice state JSON file."""
     try:
         if _VOICE_STATE_FILE.exists():
             import json
-            data = json.loads(_VOICE_STATE_FILE.read_text(encoding="utf-8"))
-            return data.get("last_voice_id")
+            return json.loads(_VOICE_STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         pass
-    return None
+    return {}
 
 
-def _get_next_voice() -> str:
-    """Alternate between authorized voices (male/female) using a persistent state file.
+def _get_last_gender() -> str:
+    """Retrieve the last used gender from state file."""
+    state = _read_voice_state()
+    gender = state.get("last_gender")
+    if not gender:
+        last_id = state.get("last_voice_id")
+        if last_id == VOICE_FEMALE_SARAH:
+            return "female"
+        return "male"
+    return gender
 
-    Each call returns the OPPOSITE voice from last time, ensuring variety across runs.
+
+def _get_last_voice_id() -> Optional[str]:
+    """Retrieve the last used voice ID from state file."""
+    state = _read_voice_state()
+    return state.get("last_voice_id")
+
+
+def _get_next_voice() -> tuple[str, str, str]:
+    """Alternate between male and female for each run.
+
+    When it is male turn, alternate between Adam and Liam (checking which was used last).
+    When it is female turn, use Sarah.
+
+    Returns:
+        tuple of (voice_id, voice_name, gender) where gender is 'male' or 'female'.
     """
     import json
 
-    last_used = None
-    try:
-        if _VOICE_STATE_FILE.exists():
-            data = json.loads(_VOICE_STATE_FILE.read_text(encoding="utf-8"))
-            last_used = data.get("last_voice_id")
-    except Exception:
-        pass
+    state = _read_voice_state()
+    last_gender = state.get("last_gender")
+    last_male_id = state.get("last_male_voice_id")
+    last_voice_id = state.get("last_voice_id")
 
-    # Pick the other voice (alternate), or first voice if no state exists
-    if last_used == AUTHORIZED_VOICE_IDS[0]:
-        next_voice = AUTHORIZED_VOICE_IDS[1]
+    if not last_gender and last_voice_id:
+        last_gender = "female" if last_voice_id == VOICE_FEMALE_SARAH else "male"
+
+    # Alternate gender
+    if last_gender == "male":
+        next_gender = "female"
+        next_voice = VOICE_FEMALE_SARAH
+        next_name = "سارة (Sarah)"
+        chosen_male_id = last_male_id
     else:
-        next_voice = AUTHORIZED_VOICE_IDS[0]
+        next_gender = "male"
+        # Alternate between Adam and Liam
+        if last_male_id == VOICE_MALE_ADAM:
+            next_voice = VOICE_MALE_LIAM
+            next_name = "ليام (Liam)"
+        else:
+            next_voice = VOICE_MALE_ADAM
+            next_name = "آدم (Adam)"
+        chosen_male_id = next_voice
 
     # Save state
     try:
         _VOICE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        new_state = {
+            "last_gender": next_gender,
+            "last_voice_id": next_voice,
+            "last_male_voice_id": chosen_male_id,
+            "last_voice_name": next_name,
+        }
         _VOICE_STATE_FILE.write_text(
-            json.dumps({"last_voice_id": next_voice}, ensure_ascii=False),
+            json.dumps(new_state, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        LOGGER.warning("Failed to save voice state: %s", exc)
 
-    return next_voice
+    return next_voice, next_name, next_gender
 
 # Edge-TTS Arabic broadcast voices
 ARABIC_VOICES = [
@@ -236,14 +271,21 @@ def _generate_tts_elevenlabs(
     output_path: Path,
     voice_id: Optional[str] = None,
     timeout: int = 40,
-) -> tuple[bool, list[dict[str, Any]]]:
-    """Generate audio via ElevenLabs REST API with automatic premade voice fallback."""
+) -> tuple[bool, list[dict[str, Any]], str]:
+    """Generate audio via ElevenLabs REST API using eleven_turbo_v2_5."""
     api_key = os.getenv("ELEVENLABS_API_KEY", ELEVENLABS_API_KEY)
     if not api_key:
-        return False, []
+        return False, [], "male"
 
-    selected_voice = voice_id or _get_next_voice()
-    voice_label = "👨 ذكر" if selected_voice == AUTHORIZED_VOICE_IDS[0] else "👩 أنثى"
+    if voice_id:
+        selected_voice = voice_id
+        gender = "female" if voice_id == VOICE_FEMALE_SARAH else "male"
+        voice_label = f"🎙️ {selected_voice[:8]}"
+    else:
+        selected_voice, voice_name, gender = _get_next_voice()
+        gender_icon = "👨 ذكر" if gender == "male" else "👩 أنثى"
+        voice_label = f"{gender_icon} - {voice_name}"
+
     print(f"🎤 المذيع المختار لهذا الريلز: {voice_label} ({selected_voice[:8]}...)")
     headers = {
         "xi-api-key": api_key,
@@ -251,13 +293,15 @@ def _generate_tts_elevenlabs(
     }
     payload = {
         "text": text,
-        "model_id": "eleven_multilingual_v2",
+        "model_id": ELEVENLABS_MODEL_ID,
         "voice_settings": {
-            "stability": 0.65,
+            "stability": 0.38,
             "similarity_boost": 0.80,
-            "style": 0.15,
+            "style": 0.25,
+            "use_speaker_boost": True,
+            "speed": 1.12,
         },
-        "speed": 0.85,
+        "speed": 1.12,
     }
 
     current_voice = selected_voice
@@ -266,13 +310,6 @@ def _generate_tts_elevenlabs(
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
 
-        # Graceful fallback: If library voice requires paid subscription (402), use premade voice with same gender
-        if resp.status_code == 402:
-            is_female = (selected_voice == AUTHORIZED_VOICE_IDS[1])
-            current_voice = PREMADE_FALLBACK_FEMALE if is_female else PREMADE_FALLBACK_MALE
-            url = f"https://api.elevenlabs.io/v1/text-to-speech/{current_voice}/with-timestamps"
-            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-
         if resp.status_code != 200:
             # Fallback to standard endpoint if with-timestamps is unavailable
             std_url = f"https://api.elevenlabs.io/v1/text-to-speech/{current_voice}"
@@ -280,7 +317,7 @@ def _generate_tts_elevenlabs(
 
         if resp.status_code != 200:
             LOGGER.warning("ElevenLabs API returned HTTP %d: %s", resp.status_code, resp.text[:200])
-            return False, []
+            return False, [], gender
 
         content_type = resp.headers.get("content-type", "")
         word_timestamps: list[dict[str, Any]] = []
@@ -299,83 +336,17 @@ def _generate_tts_elevenlabs(
                 f.write(resp.content)
 
         if not output_path.exists() or output_path.stat().st_size < 1000:
-            return False, []
+            return False, [], gender
 
         duration = _get_audio_duration_ffprobe(output_path)
         if not word_timestamps and duration > 0:
             word_timestamps = _generate_linear_word_timestamps(text, duration)
 
-        return True, word_timestamps
+        return True, word_timestamps, gender
 
     except Exception as exc:
         LOGGER.warning("ElevenLabs generation error: %s", exc)
-        return False, []
-
-
-def _generate_tts_moroccan(
-    clean_text: str,
-    output_path: Path,
-    timeout: int = 35,
-) -> tuple[bool, list[dict[str, Any]]]:
-    """Generate audio via ElevenLabs using dedicated Moroccan voice with default settings and unvocalized text.
-
-    Uses embedded MOROCCAN_API_KEY and MOROCCAN_VOICE_ID with official default settings.
-    If it fails for any reason (HTTP 402, 401, quota, timeout), gracefully returns (False, [])
-    so the pipeline can automatically fall back to standard voices with vocalized text.
-    """
-    headers = {
-        "xi-api-key": MOROCCAN_API_KEY,
-        "Content-Type": "application/json",
-    }
-    # Default settings as requested: no speed change, default stability and similarity
-    payload = {
-        "text": clean_text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75,
-        },
-    }
-
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{MOROCCAN_VOICE_ID}/with-timestamps"
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        if resp.status_code != 200:
-            std_url = f"https://api.elevenlabs.io/v1/text-to-speech/{MOROCCAN_VOICE_ID}"
-            resp = requests.post(std_url, headers=headers, json=payload, timeout=timeout)
-
-        if resp.status_code != 200:
-            LOGGER.warning("Moroccan voice API returned HTTP %d: %s", resp.status_code, resp.text[:200])
-            return False, []
-
-        content_type = resp.headers.get("content-type", "")
-        word_timestamps: list[dict[str, Any]] = []
-
-        if "application/json" in content_type:
-            data = resp.json()
-            b64_audio = data.get("audio_base64", "")
-            if b64_audio:
-                with open(output_path, "wb") as f:
-                    f.write(base64.b64decode(b64_audio))
-            alignment = data.get("alignment", {})
-            if alignment:
-                word_timestamps = _extract_words_from_alignment(alignment, clean_text)
-        else:
-            with open(output_path, "wb") as f:
-                f.write(resp.content)
-
-        if not output_path.exists() or output_path.stat().st_size < 1000:
-            return False, []
-
-        duration = _get_audio_duration_ffprobe(output_path)
-        if not word_timestamps and duration > 0:
-            word_timestamps = _generate_linear_word_timestamps(clean_text, duration)
-
-        return True, word_timestamps
-
-    except Exception as exc:
-        LOGGER.warning("Moroccan voice generation exception: %s", exc)
-        return False, []
+        return False, [], gender
 
 
 def _get_event_loop() -> asyncio.AbstractEventLoop:
@@ -392,9 +363,9 @@ async def _generate_tts_edge_async(
     text: str,
     output_path: str,
     voice: str = DEFAULT_EDGE_VOICE,
-    rate: str = "+2%",
-    pitch: str = "-2Hz",
-    volume: str = "+15%",
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+    volume: str = "+10%",
 ) -> tuple[bool, list[dict[str, Any]]]:
     """Internal async function to stream Edge-TTS audio and capture word timestamps."""
     try:
@@ -427,7 +398,7 @@ async def _generate_tts_edge_async(
 
 
 def _run_async_edge_tts(
-    text: str, output_path: str, voice: str, rate: str, pitch: str, volume: str = "+15%"
+    text: str, output_path: str, voice: str, rate: str, pitch: str, volume: str = "+10%"
 ) -> tuple[bool, list[dict[str, Any]]]:
     """Helper to run async Edge-TTS in a new event loop."""
     loop = asyncio.new_event_loop()
@@ -444,18 +415,17 @@ def generate_news_audio(
     output_dir: Path | str | None = None,
     voice: str = DEFAULT_EDGE_VOICE,
     slug: str = "news_tts",
-    rate: str = "+2%",
-    pitch: str = "-2Hz",
-    volume: str = "+15%",
-    is_moroccan_slot: Optional[bool] = None,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+    volume: str = "+10%",
     vocalized_fallback_text: Optional[str] = None,
 ) -> tuple[Optional[str], list[dict[str, Any]]]:
     """Generate Arabic TTS audio and word timestamps using ElevenLabs with automatic Edge-TTS fallback.
 
     Pipeline:
-      0. Slot Check: At 4:30 PM Yemen time, attempt dedicated Moroccan voice (OfGMGmhS...) with unvocalized text.
-      1. Primary: ElevenLabs REST API (eleven_multilingual_v2) for realistic broadcast voice.
-      2. Fallback: Edge-TTS (ar-SA-HamedNeural / ar-YE-MaryamNeural) when ElevenLabs key is missing, exhausted, or fails.
+      1. Primary: ElevenLabs REST API (eleven_turbo_v2_5) for realistic broadcast voice.
+         - Alternates between Adam & Liam for male turns, and Sarah for female turns.
+      2. Fallback: Edge-TTS (ar-MA-JamalNeural / ar-YE-MaryamNeural) when ElevenLabs key is missing, exhausted, or fails.
     """
     if not text or not text.strip():
         LOGGER.warning("Empty text provided for TTS generation.")
@@ -468,25 +438,9 @@ def generate_news_audio(
     output_file = out_dir / f"{slug}_{timestamp}.mp3"
     clean_text = _prepare_text_for_narration(text)
 
-    # 0. Check for dedicated Moroccan voice slot (4:30 PM Yemen time = 13:30 UTC)
-    use_moroccan = is_moroccan_slot if is_moroccan_slot is not None else is_moroccan_slot_time()
-    if use_moroccan:
-        print(f"🇲🇦 [موعد 4:30 عصراً] محاولة توليد التعليق الصوتي بالصوت المغربي المخصص ({MOROCCAN_VOICE_ID[:8]}...) بنص غير مشكول...")
-        # Strip all tashkeel / diacritics for Moroccan dialect voice
-        text_without_tashkeel = re.sub(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]", "", clean_text).strip()
-        success_m, word_timestamps_m = _generate_tts_moroccan(text_without_tashkeel, output_file)
-        if success_m and output_file.exists() and output_file.stat().st_size > 1000:
-            file_size_kb = output_file.stat().st_size / 1024
-            print(f"✅ تم توليد التعليق الصوتي بنجاح بالصوت المغربي ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps_m)} كلمة!")
-            return str(output_file), word_timestamps_m
-        else:
-            print("🔄 [التبديل التلقائي] تعذر التوليد عبر الصوت المغربي، الانتقال التلقائي للصوت الإخباري المعتمد بالنص المشكول...")
-            if vocalized_fallback_text and vocalized_fallback_text.strip():
-                clean_text = _prepare_text_for_narration(vocalized_fallback_text)
-
     # 1. Primary Engine: ElevenLabs REST API
-    print(f"🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك ElevenLabs API...")
-    success, word_timestamps = _generate_tts_elevenlabs(clean_text, output_file)
+    print(f"🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك ElevenLabs API ({ELEVENLABS_MODEL_ID})...")
+    success, word_timestamps, gender = _generate_tts_elevenlabs(clean_text, output_file)
 
     if success and output_file.exists() and output_file.stat().st_size > 1000:
         file_size_kb = output_file.stat().st_size / 1024
@@ -495,13 +449,12 @@ def generate_news_audio(
 
     # 2. Fallback Engine: Microsoft Edge-TTS
     print(f"🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs (أو نفاد الرصيد)، جاري التبديل للمحرك الأصلي (Edge-TTS)...")
-    last_voice = _get_last_voice_id()
-    if last_voice == AUTHORIZED_VOICE_IDS[1]:
-        edge_voice = "ar-YE-MaryamNeural"
-        print(f"🎤 [Edge-TTS البديل] مذيعة: مريم (ar-YE-MaryamNeural)")
+    if gender == "female":
+        edge_voice = EDGE_VOICE_FEMALE  # ar-YE-MaryamNeural
+        print(f"🎤 [Edge-TTS البديل] مذيعة: مريم ({edge_voice})")
     else:
-        edge_voice = voice or DEFAULT_EDGE_VOICE
-        print(f"🎤 [Edge-TTS البديل] مذيع: علي ({edge_voice})")
+        edge_voice = EDGE_VOICE_MALE    # ar-MA-JamalNeural
+        print(f"🎤 [Edge-TTS البديل] مذيع: جمال المغربي ({edge_voice})")
 
     try:
         loop = _get_event_loop()
