@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.design.subtitles_ass import generate_subtitle_states
+from app.design.subtitles_ass import compose_subtitle_video, generate_subtitle_states
 
 LOGGER = logging.getLogger(__name__)
 
@@ -373,17 +373,19 @@ def compose_news_reel(
         if res_concat.returncode != 0:
             raise RuntimeError(f"FFmpeg concat failed: {res_concat.stderr[-400:]}")
 
-        # 5. Generate PNG subtitle state overlays with 100% deterministic word ordering
-        sub_states_dir = temp_dir / "subtitle_states"
+        # 5. Pre-compose dynamic 3-word subtitles into a single transparent video track (zero overlap)
         cairo_font_path = DEFAULT_FONTS_DIR / "Cairo-Bold.ttf"
         font_file_str = str(cairo_font_path if cairo_font_path.exists() else _get_font(64).path)
+        sub_video_path = temp_dir / "subtitle_track.mov"
 
-        subtitle_states = generate_subtitle_states(
+        compose_subtitle_video(
             word_timestamps=word_timestamps or [],
-            output_dir=sub_states_dir,
+            audio_duration=total_duration,
+            output_path=sub_video_path,
             font_path=font_file_str,
             font_size=64,
-            chunk_size=4,
+            chunk_size=3,
+            fps=fps,
         )
 
         # 6. Build FFmpeg input list and filter-complex overlay chain
@@ -406,9 +408,8 @@ def compose_news_reel(
             bgm_idx = len(input_files)
             input_files.append(bg_music_file)
 
-        first_sub_idx = len(input_files)
-        for st in subtitle_states:
-            input_files.append(Path(st["path"]))
+        sub_idx = len(input_files)
+        input_files.append(sub_video_path)
 
         cmd_inputs: List[str] = []
         for inp_f in input_files:
@@ -426,15 +427,10 @@ def compose_news_reel(
             cur_v = "v_attr"
 
         sub_y = 1450
-        for i, st in enumerate(subtitle_states):
-            in_idx = first_sub_idx + i
-            out_v = f"v_sub{i}"
-            t_start = st["start"]
-            t_end = st["end"]
-            filter_parts.append(
-                f"[{cur_v}][{in_idx}:v]overlay=0:{sub_y}:enable='between(t,{t_start:.3f},{t_end:.3f})'[{out_v}]"
-            )
-            cur_v = out_v
+        filter_parts.append(
+            f"[{cur_v}][{sub_idx}:v]overlay=0:{sub_y}:shortest=0:format=auto[v_sub]"
+        )
+        cur_v = "v_sub"
 
         # Animated progress bar at bottom edge (6px height, y=1904)
         bar_w = REEL_WIDTH - 80

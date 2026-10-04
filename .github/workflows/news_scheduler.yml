@@ -3,9 +3,7 @@ name: TaizNews AI Automated Newsroom
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 11 * * *' # ستعمل حوالي 2:17 ظهراً 
-    - cron: '43 13 * * *' # ستعمل حوالي 4:43 عصراً
-    - cron: '11 19 * * *' # ستعمل حوالي 10:11 مساءً
+    - cron: '0 */4 * * *' # تعمل كل 4 ساعات تلقائياً
 
 permissions:
   contents: write

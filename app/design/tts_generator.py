@@ -45,6 +45,11 @@ LOGGER = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "generated_audio"
 
+# ElevenLabs engine toggle: when False, ElevenLabs API is bypassed and Gemini TTS is used directly
+ENABLE_ELEVENLABS: bool = False
+if os.getenv("ENABLE_ELEVENLABS", "").lower() in ("true", "1"):
+    ENABLE_ELEVENLABS = True
+
 # ElevenLabs configuration
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
@@ -61,6 +66,22 @@ MALE_VOICE_IDS = [VOICE_MALE_ADAM, VOICE_MALE_LIAM]
 
 # Primary Model: eleven_turbo_v2_5 (50% cheaper credits, fast generation)
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+
+# Gemini TTS Models Cascading Priority Order (Single-attempt fallback: 3.8 -> 3.1 -> 2.5 -> 3.8 Lite)
+GEMINI_TTS_CASCADING_MODELS = [
+    "gemini-3.8-flash-tts",
+    "gemini-3.1-flash-tts",
+    "gemini-2.5-flash-tts",
+    "gemini-2.5-flash-preview-tts",
+    "gemini-3.8-flash-lite-tts",
+]
+
+# Gemini Authorized Voices:
+# Female: Kore (كوري)
+# Male: Orus (أوروس) & Charon (شارون)
+GEMINI_VOICE_FEMALE_KORE = "Kore"
+GEMINI_VOICE_MALE_ORUS = "Orus"
+GEMINI_VOICE_MALE_CHARON = "Charon"
 
 # Edge-TTS Fallback Voices
 EDGE_VOICE_MALE = "ar-MA-JamalNeural"      # Jamal - Moroccan male news presenter
@@ -154,6 +175,57 @@ def _get_next_voice() -> tuple[str, str, str]:
 
     return next_voice, next_name, next_gender
 
+
+def _get_next_gemini_voice() -> tuple[str, str, str]:
+    """Alternate between female (Kore) and male (alternating between Orus & Charon) for Gemini TTS.
+
+    Returns:
+        tuple of (voice_id, voice_name, gender) where gender is 'male' or 'female'.
+    """
+    import json
+
+    state = _read_voice_state()
+    last_gender = state.get("last_gemini_gender") or state.get("last_gender", "male")
+    last_male_id = state.get("last_gemini_male_voice_id")
+
+    # Alternate gender
+    if last_gender == "male":
+        next_gender = "female"
+        next_voice = GEMINI_VOICE_FEMALE_KORE
+        next_name = "كوري (Kore)"
+        chosen_male_id = last_male_id or GEMINI_VOICE_MALE_ORUS
+    else:
+        next_gender = "male"
+        # Alternate between Orus and Charon
+        if last_male_id == GEMINI_VOICE_MALE_ORUS:
+            next_voice = GEMINI_VOICE_MALE_CHARON
+            next_name = "شارون (Charon)"
+        else:
+            next_voice = GEMINI_VOICE_MALE_ORUS
+            next_name = "أوروس (Orus)"
+        chosen_male_id = next_voice
+
+    # Save state
+    try:
+        _VOICE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        new_state = dict(state)
+        new_state.update({
+            "last_gender": next_gender,
+            "last_gemini_gender": next_gender,
+            "last_voice_id": next_voice,
+            "last_voice_name": next_name,
+            "last_gemini_male_voice_id": chosen_male_id,
+        })
+        _VOICE_STATE_FILE.write_text(
+            json.dumps(new_state, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        LOGGER.warning("Failed to save voice state: %s", exc)
+
+    return next_voice, next_name, next_gender
+
+
 # Edge-TTS Arabic broadcast voices
 ARABIC_VOICES = [
     "ar-BH-AliNeural",        # Bahraini male - authoritative, broadcast anchor (Ali from Bahrain)
@@ -212,7 +284,7 @@ def _generate_linear_word_timestamps(text: str, duration: float) -> list[dict[st
     return timestamps
 
 
-def _extract_words_from_alignment(alignment: dict[str, Any], raw_text: str) -> list[dict[str, Any]]:
+def _extract_words_from_alignment(alignment: dict[str, Any], raw_text: str, audio_duration: float = 0.0) -> list[dict[str, Any]]:
     """Extract word-level timestamps from ElevenLabs character-level alignment."""
     chars = alignment.get("characters", [])
     starts = alignment.get("character_start_times_seconds", [])
@@ -248,15 +320,33 @@ def _extract_words_from_alignment(alignment: dict[str, Any], raw_text: str) -> l
             "end": round(prev_end, 3),
         })
 
+    # If alignment word count differs too much from text (>30%), alignment is unreliable
+    if char_words and words_from_text:
+        mismatch_ratio = abs(len(char_words) - len(words_from_text)) / len(words_from_text)
+        if mismatch_ratio > 0.30:
+            LOGGER.warning(
+                "Alignment mismatch: %d aligned vs %d text words (%.0f%%). Using linear fallback.",
+                len(char_words), len(words_from_text), mismatch_ratio * 100,
+            )
+            return []
+
+    last_align_end = char_words[-1]["end"] if char_words else 0.0
+    remaining_count = max(len(words_from_text) - len(char_words), 0)
+    if remaining_count > 0 and audio_duration > last_align_end:
+        remaining_dur = audio_duration - last_align_end - 0.1  # small end padding
+        per_word = max(remaining_dur / remaining_count, 0.15)
+    else:
+        per_word = 0.35  # absolute fallback (shouldn't normally reach here)
+
     result: list[dict[str, Any]] = []
     for i, w in enumerate(words_from_text):
         if i < len(char_words):
             s_time = char_words[i]["start"]
             e_time = char_words[i]["end"]
         else:
-            prev_e = result[-1]["end"] if result else 0.0
-            s_time = prev_e
-            e_time = prev_e + 0.35
+            offset = i - len(char_words)
+            s_time = round(last_align_end + (offset * per_word), 3)
+            e_time = round(s_time + per_word, 3)
 
         result.append({
             "text": _clean_word_for_subtitles(w) or w,
@@ -299,9 +389,9 @@ def _generate_tts_elevenlabs(
             "similarity_boost": 0.80,
             "style": 0.25,
             "use_speaker_boost": True,
-            "speed": 1.12,
+            "speed": 1.05,
         },
-        "speed": 1.12,
+        "speed": 1.05,
     }
 
     current_voice = selected_voice
@@ -321,6 +411,7 @@ def _generate_tts_elevenlabs(
 
         content_type = resp.headers.get("content-type", "")
         word_timestamps: list[dict[str, Any]] = []
+        alignment: dict[str, Any] = {}
 
         if "application/json" in content_type:
             data = resp.json()
@@ -329,8 +420,6 @@ def _generate_tts_elevenlabs(
                 with open(output_path, "wb") as f:
                     f.write(base64.b64decode(b64_audio))
             alignment = data.get("alignment", {})
-            if alignment:
-                word_timestamps = _extract_words_from_alignment(alignment, text)
         else:
             with open(output_path, "wb") as f:
                 f.write(resp.content)
@@ -339,6 +428,10 @@ def _generate_tts_elevenlabs(
             return False, [], gender
 
         duration = _get_audio_duration_ffprobe(output_path)
+
+        # Extract alignment AFTER knowing actual audio duration
+        if alignment:
+            word_timestamps = _extract_words_from_alignment(alignment, text, duration)
         if not word_timestamps and duration > 0:
             word_timestamps = _generate_linear_word_timestamps(text, duration)
 
@@ -363,7 +456,7 @@ async def _generate_tts_edge_async(
     text: str,
     output_path: str,
     voice: str = DEFAULT_EDGE_VOICE,
-    rate: str = "+0%",
+    rate: str = "+10%",
     pitch: str = "+0Hz",
     volume: str = "+10%",
 ) -> tuple[bool, list[dict[str, Any]]]:
@@ -410,22 +503,150 @@ def _run_async_edge_tts(
         loop.close()
 
 
+def _generate_tts_gemini(
+    text: str,
+    output_path: Path,
+    voice_id: Optional[str] = None,
+) -> tuple[bool, list[dict[str, Any]], str]:
+    """Synthesize speech using Google Gemini Flash TTS with single-attempt model cascading.
+
+    Prompt is sent STRICTLY verbatim with no instruction wrapping.
+    Speed is adjusted slightly via FFmpeg (atempo=1.06) for crisp broadcast delivery.
+    Word timestamps are evenly distributed across actual audio duration.
+    """
+    from google import genai
+    from google.genai import types
+
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_VOICE_LAB_KEY")
+    if not gemini_key:
+        LOGGER.error("GEMINI_API_KEY is not set.")
+        return False, [], "male"
+
+    if voice_id:
+        selected_voice = voice_id
+        gender = "female" if voice_id == GEMINI_VOICE_FEMALE_KORE else "male"
+        voice_label = f"🎙️ {selected_voice}"
+    else:
+        selected_voice, voice_name, gender = _get_next_gemini_voice()
+        gender_icon = "👨 ذكر" if gender == "male" else "👩 أنثى"
+        voice_label = f"{gender_icon} - {voice_name}"
+
+    print(f"🎤 المذيع المختار لهذا الريلز (Gemini): {voice_label} ({selected_voice})")
+
+    try:
+        client = genai.Client(api_key=gemini_key)
+    except Exception as init_err:
+        LOGGER.error("Failed to initialize Google GenAI client: %s", init_err)
+        return False, [], gender
+
+    config = types.GenerateContentConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=selected_voice
+                )
+            )
+        ),
+    )
+
+    response = None
+
+    for target_model in GEMINI_TTS_CASCADING_MODELS:
+        print(f"🤖 [Gemini TTS] محاولة التوليد عبر النموذج: [{target_model}] (محاولة واحدة فقط)...")
+        try:
+            # Strictly send raw text verbatim without instructions
+            response = client.models.generate_content(
+                model=target_model,
+                contents=text,
+                config=config,
+            )
+            if (
+                response
+                and response.candidates
+                and response.candidates[0].content
+                and response.candidates[0].content.parts
+            ):
+                print(f"✅ نجح التوليد الصوتي بنجاح باستخدام النموذج: [{target_model}]")
+                break
+            else:
+                print(f"⚠️ النموذج [{target_model}] أعاد استجابة فارغة. الانتقال الفوري للنموذج التالي...")
+        except Exception as api_err:
+            err_str = str(api_err)
+            err_lower = err_str.lower()
+            if "429" in err_str or "resource_exhausted" in err_lower or "quota" in err_lower:
+                print(f"⛔ تم بلوغ حد الحصة للنموذج [{target_model}] (429 Quota Exceeded).")
+            elif "404" in err_str or "not_found" in err_lower:
+                print(f"⚠️ النموذج [{target_model}] غير متاح (404 Not Found).")
+            else:
+                print(f"⚠️ خطأ أثناء الطلب بالنموذج [{target_model}]: {err_str[:120]}.")
+            print("🔄 جاري الانتقال الفوري للنموذج التالي في القائمة...")
+            continue
+
+    if not response or not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
+        LOGGER.error("Gemini TTS returned no audio candidates across all cascading models.")
+        return False, [], gender
+
+    try:
+        candidate = response.candidates[0]
+        part = candidate.content.parts[0]
+        if not hasattr(part, "inline_data") or not part.inline_data or not part.inline_data.data:
+            LOGGER.error("Gemini TTS candidate contains no audio data.")
+            return False, [], gender
+
+        raw_pcm_data = part.inline_data.data
+        temp_pcm = output_path.with_suffix(".raw.pcm")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(temp_pcm, "wb") as f:
+            f.write(raw_pcm_data)
+
+        # Convert raw PCM (s16le 24000Hz mono) to mp3 with atempo=1.06
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "s16le",
+            "-ar", "24000",
+            "-ac", "1",
+            "-i", str(temp_pcm),
+            "-af", "atempo=1.06",
+            "-c:a", "libmp3lame",
+            "-b:a", "192k",
+            str(output_path),
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if temp_pcm.exists():
+            temp_pcm.unlink(missing_ok=True)
+
+        if res.returncode != 0 or not output_path.exists() or output_path.stat().st_size < 1000:
+            LOGGER.error("FFmpeg PCM conversion failed: %s", res.stderr[-300:] if res else "")
+            return False, [], gender
+
+        duration = _get_audio_duration_ffprobe(output_path)
+        word_timestamps = _generate_linear_word_timestamps(text, duration)
+        return True, word_timestamps, gender
+
+    except Exception as exc:
+        LOGGER.error("Gemini TTS synthesis processing error: %s", exc)
+        return False, [], gender
+
+
 def generate_news_audio(
     text: str,
     output_dir: Path | str | None = None,
     voice: str = DEFAULT_EDGE_VOICE,
     slug: str = "news_tts",
-    rate: str = "+0%",
+    rate: str = "+10%",
     pitch: str = "+0Hz",
     volume: str = "+10%",
     vocalized_fallback_text: Optional[str] = None,
 ) -> tuple[Optional[str], list[dict[str, Any]]]:
-    """Generate Arabic TTS audio and word timestamps using ElevenLabs with automatic Edge-TTS fallback.
+    """Generate Arabic TTS audio and word timestamps.
 
     Pipeline:
-      1. Primary: ElevenLabs REST API (eleven_turbo_v2_5) for realistic broadcast voice.
-         - Alternates between Adam & Liam for male turns, and Sarah for female turns.
-      2. Fallback: Edge-TTS (ar-MA-JamalNeural / ar-YE-MaryamNeural) when ElevenLabs key is missing, exhausted, or fails.
+      1. Primary (if ENABLE_ELEVENLABS=True): ElevenLabs REST API.
+      2. Primary (if ENABLE_ELEVENLABS=False, or ElevenLabs fails): Google Gemini Flash TTS
+         - Alternates between Female (Kore) and Male (Orus / Charon).
+         - Cascades across models: 3.8 -> 3.1 -> 2.5 -> 3.8 Lite (1 attempt each).
+      3. Fallback: Edge-TTS (ar-MA-JamalNeural / ar-YE-MaryamNeural) if all upstream engines fail.
     """
     if not text or not text.strip():
         LOGGER.warning("Empty text provided for TTS generation.")
@@ -437,18 +658,30 @@ def generate_news_audio(
     timestamp = int(time.time())
     output_file = out_dir / f"{slug}_{timestamp}.mp3"
     clean_text = _prepare_text_for_narration(text)
+    gender = "male"
 
-    # 1. Primary Engine: ElevenLabs REST API
-    print(f"🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك ElevenLabs API ({ELEVENLABS_MODEL_ID})...")
-    success, word_timestamps, gender = _generate_tts_elevenlabs(clean_text, output_file)
+    # 1. ElevenLabs REST API (bypassed if ENABLE_ELEVENLABS is False)
+    if ENABLE_ELEVENLABS:
+        print(f"🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك ElevenLabs API ({ELEVENLABS_MODEL_ID})...")
+        success, word_timestamps, gender = _generate_tts_elevenlabs(clean_text, output_file)
+        if success and output_file.exists() and output_file.stat().st_size > 1000:
+            file_size_kb = output_file.stat().st_size / 1024
+            print(f"✅ تم توليد التعليق الصوتي عبر ElevenLabs بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
+            return str(output_file), word_timestamps
+        print("🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs، جاري الانتقال إلى محرك Gemini TTS...")
+    else:
+        print("⚡ [محرك ElevenLabs معطل - ENABLE_ELEVENLABS=False] جاري الانتقال مباشرة إلى محرك Gemini TTS...")
 
+    # 2. Gemini Flash TTS Engine
+    print("🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك Google Gemini Flash TTS...")
+    success, word_timestamps, gender = _generate_tts_gemini(clean_text, output_file)
     if success and output_file.exists() and output_file.stat().st_size > 1000:
         file_size_kb = output_file.stat().st_size / 1024
-        print(f"✅ تم توليد التعليق الصوتي عبر ElevenLabs بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
+        print(f"✅ تم توليد التعليق الصوتي عبر Gemini TTS بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
         return str(output_file), word_timestamps
 
-    # 2. Fallback Engine: Microsoft Edge-TTS
-    print(f"🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs (أو نفاد الرصيد)، جاري التبديل للمحرك الأصلي (Edge-TTS)...")
+    # 3. Fallback Engine: Microsoft Edge-TTS
+    print("🔄 [التبديل التلقائي] تعذر التوليد عبر Gemini TTS، جاري التبديل للمحرك الاحتياطي (Edge-TTS)...")
     if gender == "female":
         edge_voice = EDGE_VOICE_FEMALE  # ar-YE-MaryamNeural
         print(f"🎤 [Edge-TTS البديل] مذيعة: مريم ({edge_voice})")
