@@ -10,8 +10,21 @@ actual root cause of the reordering bug.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
+
+# Windows console encoding
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -148,13 +161,47 @@ def compose_subtitle_video(
             else:
                 proc.stdin.write(active["bytes"])
 
-        proc.stdin.close()
+        # Flush before closing
+        try:
+            if proc.stdin:
+                proc.stdin.flush()
+        except Exception:
+            pass
+
+        # Close stdin to signal EOF to FFmpeg
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+        except Exception:
+            pass
+
+        # CRITICAL FIX for Linux/POSIX (GitHub Actions):
+        # Setting proc.stdin = None prevents Python's proc.communicate() on POSIX
+        # from trying to call self.stdin.flush() on an already closed stream,
+        # which raises "ValueError: flush of closed file".
+        proc.stdin = None
+
         _, stderr_data = proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(f"FFmpeg subtitle composition failed: {stderr_data.decode(errors='replace')}")
     except BrokenPipeError:
+        if proc.stdin:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+            proc.stdin = None
         proc.kill()
         raise RuntimeError("FFmpeg subtitle composition pipe broke unexpectedly.")
+    except Exception:
+        if proc.stdin:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+            proc.stdin = None
+        proc.kill()
+        raise
 
     return output_path
 
