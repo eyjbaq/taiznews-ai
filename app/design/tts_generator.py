@@ -284,6 +284,107 @@ def _generate_linear_word_timestamps(text: str, duration: float) -> list[dict[st
     return timestamps
 
 
+def _extract_timestamps_with_whisper(
+    audio_path: Path,
+    original_text: str,
+) -> list[dict[str, Any]]:
+    """Extract precise word timestamps from audio using faster-whisper STT.
+
+    Listens to the actual Gemini TTS audio and detects exactly where each word
+    starts and ends, giving much better subtitle sync than linear distribution.
+
+    Falls back gracefully (returns []) if faster-whisper is not installed or
+    if extraction fails for any reason.
+    """
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        LOGGER.warning("faster-whisper not installed, falling back to linear timestamps.")
+        return []
+
+    try:
+        import subprocess
+        import numpy as np
+        
+        print("🎯 [Whisper Sync] جاري تحليل الصوت لاستخراج توقيتات دقيقة لكل كلمة...")
+        model = WhisperModel("tiny", compute_type="int8", device="cpu")
+
+        # Bypass av.open() which fails with newer PyAV versions by decoding with ffmpeg directly
+        cmd = [
+            "ffmpeg", "-nostdin", "-threads", "0", "-i", str(audio_path),
+            "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", "16000", "-"
+        ]
+        audio_data = subprocess.run(cmd, capture_output=True, check=True).stdout
+        audio_array = np.frombuffer(audio_data, np.int16).flatten().astype(np.float32) / 32768.0
+
+        segments, info = model.transcribe(
+            audio_array,
+            word_timestamps=True,
+            language="ar",
+        )
+
+        # Extract word timestamps from Whisper output
+        whisper_words: list[dict[str, Any]] = []
+        for segment in segments:
+            if segment.words:
+                for w in segment.words:
+                    cleaned = _clean_word_for_subtitles(w.word)
+                    if cleaned:
+                        whisper_words.append({
+                            "text": cleaned,
+                            "start": round(w.start, 3),
+                            "end": round(w.end, 3),
+                        })
+
+        if not whisper_words:
+            LOGGER.warning("Whisper returned no words from audio.")
+            return []
+
+        # Match Whisper timestamps with original text words for correct display
+        original_words = [_clean_word_for_subtitles(w) for w in original_text.split() if w.strip()]
+        original_words = [w for w in original_words if w]
+
+        if not original_words:
+            return whisper_words
+
+        match_ratio = len(whisper_words) / max(len(original_words), 1)
+
+        if match_ratio >= 0.7:
+            # Good match — use Whisper timestamps with original text labels
+            result: list[dict[str, Any]] = []
+            for i, orig_word in enumerate(original_words):
+                if i < len(whisper_words):
+                    result.append({
+                        "text": orig_word,
+                        "start": whisper_words[i]["start"],
+                        "end": whisper_words[i]["end"],
+                    })
+                else:
+                    # Remaining words: distribute linearly after last Whisper word
+                    last_end = result[-1]["end"] if result else 0.0
+                    per_word = 0.35
+                    offset = i - len(whisper_words)
+                    result.append({
+                        "text": orig_word,
+                        "start": round(last_end + (offset * per_word), 3),
+                        "end": round(last_end + ((offset + 1) * per_word), 3),
+                    })
+
+            print(f"✅ [Whisper Sync] تم استخراج {len(result)} كلمة بتوقيتات دقيقة من الصوت الفعلي!")
+            return result
+        else:
+            LOGGER.warning(
+                "Whisper word count mismatch: %d detected vs %d original (%.0f%%). Falling back.",
+                len(whisper_words), len(original_words), match_ratio * 100,
+            )
+            return []
+
+    except Exception as exc:
+        LOGGER.warning("Whisper timestamp extraction failed: %s", exc)
+        return []
+
+
+
 def _extract_words_from_alignment(alignment: dict[str, Any], raw_text: str, audio_duration: float = 0.0) -> list[dict[str, Any]]:
     """Extract word-level timestamps from ElevenLabs character-level alignment."""
     chars = alignment.get("characters", [])
@@ -621,7 +722,10 @@ def _generate_tts_gemini(
             return False, [], gender
 
         duration = _get_audio_duration_ffprobe(output_path)
-        word_timestamps = _generate_linear_word_timestamps(text, duration)
+        word_timestamps = _extract_timestamps_with_whisper(output_path, text)
+        if not word_timestamps:
+            print("⚠️ [Fallback] تعذر استخراج التوقيتات عبر Whisper، جاري استخدام التوزيع الخطي البديل...")
+            word_timestamps = _generate_linear_word_timestamps(text, duration)
         return True, word_timestamps, gender
 
     except Exception as exc:

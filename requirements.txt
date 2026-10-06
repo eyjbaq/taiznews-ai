@@ -10,3 +10,4 @@ arabic-reshaper>=3.0.0
 python-bidi>=0.4.2
 edge-tts>=6.1.0
 moviepy>=2.0.0
+faster-whisper>=1.0.0
