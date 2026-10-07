@@ -347,37 +347,67 @@ def _extract_timestamps_with_whisper(
         if not original_words:
             return whisper_words
 
-        match_ratio = len(whisper_words) / max(len(original_words), 1)
+        import difflib
+        whisper_texts = [w["text"] for w in whisper_words]
+        matcher = difflib.SequenceMatcher(None, whisper_texts, original_words)
+        
+        # Prepare result array with empty timestamps
+        result: list[dict[str, Any]] = [{"text": w, "start": None, "end": None} for w in original_words]
+        
+        # 1. Fill exact matches and 1-to-1 replacements
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal' or (tag == 'replace' and (i2 - i1) == (j2 - j1)):
+                for w_idx, o_idx in zip(range(i1, i2), range(j1, j2)):
+                    result[o_idx]["start"] = whisper_words[w_idx]["start"]
+                    result[o_idx]["end"] = whisper_words[w_idx]["end"]
+        
+        # 2. Interpolate missing timestamps smoothly
+        def get_prev_end(idx: int) -> float:
+            for k in range(idx - 1, -1, -1):
+                if result[k]["end"] is not None:
+                    return result[k]["end"]
+            return 0.0
 
-        if match_ratio >= 0.7:
-            # Good match — use Whisper timestamps with original text labels
-            result: list[dict[str, Any]] = []
-            for i, orig_word in enumerate(original_words):
-                if i < len(whisper_words):
-                    result.append({
-                        "text": orig_word,
-                        "start": whisper_words[i]["start"],
-                        "end": whisper_words[i]["end"],
-                    })
+        def get_next_start(idx: int) -> float | None:
+            for k in range(idx + 1, len(result)):
+                if result[k]["start"] is not None:
+                    return result[k]["start"]
+            return None
+
+        i = 0
+        while i < len(result):
+            if result[i]["start"] is None:
+                start_missing = i
+                while i < len(result) and result[i]["start"] is None:
+                    i += 1
+                end_missing = i - 1
+                
+                prev_time = get_prev_end(start_missing)
+                next_time = get_next_start(end_missing)
+                count = end_missing - start_missing + 1
+                
+                if next_time is None:
+                    # Missing words at the end
+                    for j in range(count):
+                        result[start_missing + j]["start"] = round(prev_time + (j * 0.35), 3)
+                        result[start_missing + j]["end"] = round(prev_time + ((j + 1) * 0.35), 3)
                 else:
-                    # Remaining words: distribute linearly after last Whisper word
-                    last_end = result[-1]["end"] if result else 0.0
-                    per_word = 0.35
-                    offset = i - len(whisper_words)
-                    result.append({
-                        "text": orig_word,
-                        "start": round(last_end + (offset * per_word), 3),
-                        "end": round(last_end + ((offset + 1) * per_word), 3),
-                    })
+                    # Interpolate in between prev_time and next_time
+                    gap = next_time - prev_time
+                    if gap <= 0:
+                        gap = 0.1 * count # minimal fallback gap
+                    
+                    time_per_word = gap / count
+                    for j in range(count):
+                        w_start = prev_time + (j * time_per_word)
+                        w_end = prev_time + ((j + 1) * time_per_word)
+                        result[start_missing + j]["start"] = round(w_start, 3)
+                        result[start_missing + j]["end"] = round(w_end, 3)
+            else:
+                i += 1
 
-            print(f"✅ [Whisper Sync] تم استخراج {len(result)} كلمة بتوقيتات دقيقة من الصوت الفعلي!")
-            return result
-        else:
-            LOGGER.warning(
-                "Whisper word count mismatch: %d detected vs %d original (%.0f%%). Falling back.",
-                len(whisper_words), len(original_words), match_ratio * 100,
-            )
-            return []
+        print(f"✅ [Whisper Sync] تم استخراج وتصحيح توقيتات {len(result)} كلمة باحترافية (Dynamic Sync)!")
+        return result
 
     except Exception as exc:
         LOGGER.warning("Whisper timestamp extraction failed: %s", exc)
