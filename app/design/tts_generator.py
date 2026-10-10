@@ -56,13 +56,13 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 # Primary ElevenLabs Authorized Voices:
 # Male Voices: Adam and Liam (alternated for male turns)
 VOICE_MALE_ADAM = os.getenv("ELEVENLABS_VOICE_ADAM", "pNInz6obpgDQGcFmaJgB")
-VOICE_MALE_LIAM = os.getenv("ELEVENLABS_VOICE_LIAM", "TX3LPaxmHKxFdv7VOQHJ")
+
 
 # Female Voice: Sarah
-VOICE_FEMALE_SARAH = os.getenv("ELEVENLABS_VOICE_SARAH", "EXAVITQu4vr4xnSDxMaL")
 
-AUTHORIZED_VOICE_IDS = [VOICE_MALE_ADAM, VOICE_FEMALE_SARAH]
-MALE_VOICE_IDS = [VOICE_MALE_ADAM, VOICE_MALE_LIAM]
+
+AUTHORIZED_VOICE_IDS = [VOICE_MALE_ADAM]
+MALE_VOICE_IDS = [VOICE_MALE_ADAM]
 
 # Primary Model: eleven_turbo_v2_5 (50% cheaper credits, fast generation)
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
@@ -122,108 +122,45 @@ def _get_last_voice_id() -> Optional[str]:
 
 
 def _get_next_voice() -> tuple[str, str, str]:
-    """Alternate between male and female for each run.
+    """Return Adam exclusively for ElevenLabs when enabled."""
+    return VOICE_MALE_ADAM, "آدم (Adam)", "male"
 
-    When it is male turn, alternate between Adam and Liam (checking which was used last).
-    When it is female turn, use Sarah.
 
+def _get_next_free_voice() -> tuple[str, str, str]:
+    """Rotate between Orus (Gemini) -> Maryam (Edge) -> Jamal (Edge).
+    
     Returns:
-        tuple of (voice_id, voice_name, gender) where gender is 'male' or 'female'.
+        tuple of (engine, voice_id, gender)
+        engine is 'gemini' or 'edge'
     """
     import json
-
     state = _read_voice_state()
-    last_gender = state.get("last_gender")
-    last_male_id = state.get("last_male_voice_id")
-    last_voice_id = state.get("last_voice_id")
-
-    if not last_gender and last_voice_id:
-        last_gender = "female" if last_voice_id == VOICE_FEMALE_SARAH else "male"
-
-    # Alternate gender
-    if last_gender == "male":
-        next_gender = "female"
-        next_voice = VOICE_FEMALE_SARAH
-        next_name = "سارة (Sarah)"
-        chosen_male_id = last_male_id
+    # 0 = Orus, 1 = Maryam, 2 = Jamal
+    last_index = state.get("last_free_voice_index", -1)
+    
+    next_index = (last_index + 1) % 3
+    
+    if next_index == 0:
+        engine = "gemini"
+        voice_id = GEMINI_VOICE_MALE_ORUS
+        gender = "male"
+    elif next_index == 1:
+        engine = "edge"
+        voice_id = EDGE_VOICE_FEMALE
+        gender = "female"
     else:
-        next_gender = "male"
-        # Alternate between Adam and Liam
-        if last_male_id == VOICE_MALE_ADAM:
-            next_voice = VOICE_MALE_LIAM
-            next_name = "ليام (Liam)"
-        else:
-            next_voice = VOICE_MALE_ADAM
-            next_name = "آدم (Adam)"
-        chosen_male_id = next_voice
-
-    # Save state
+        engine = "edge"
+        voice_id = EDGE_VOICE_MALE
+        gender = "male"
+        
+    state["last_free_voice_index"] = next_index
     try:
         _VOICE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        new_state = {
-            "last_gender": next_gender,
-            "last_voice_id": next_voice,
-            "last_male_voice_id": chosen_male_id,
-            "last_voice_name": next_name,
-        }
-        _VOICE_STATE_FILE.write_text(
-            json.dumps(new_state, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        _VOICE_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
     except Exception as exc:
-        LOGGER.warning("Failed to save voice state: %s", exc)
-
-    return next_voice, next_name, next_gender
-
-
-def _get_next_gemini_voice() -> tuple[str, str, str]:
-    """Alternate between female (Kore) and male (alternating between Orus & Charon) for Gemini TTS.
-
-    Returns:
-        tuple of (voice_id, voice_name, gender) where gender is 'male' or 'female'.
-    """
-    import json
-
-    state = _read_voice_state()
-    last_gender = state.get("last_gemini_gender") or state.get("last_gender", "male")
-    last_male_id = state.get("last_gemini_male_voice_id")
-
-    # Alternate gender
-    if last_gender == "male":
-        next_gender = "female"
-        next_voice = GEMINI_VOICE_FEMALE_KORE
-        next_name = "كوري (Kore)"
-        chosen_male_id = last_male_id or GEMINI_VOICE_MALE_ORUS
-    else:
-        next_gender = "male"
-        # Alternate between Orus and Charon
-        if last_male_id == GEMINI_VOICE_MALE_ORUS:
-            next_voice = GEMINI_VOICE_MALE_CHARON
-            next_name = "شارون (Charon)"
-        else:
-            next_voice = GEMINI_VOICE_MALE_ORUS
-            next_name = "أوروس (Orus)"
-        chosen_male_id = next_voice
-
-    # Save state
-    try:
-        _VOICE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        new_state = dict(state)
-        new_state.update({
-            "last_gender": next_gender,
-            "last_gemini_gender": next_gender,
-            "last_voice_id": next_voice,
-            "last_voice_name": next_name,
-            "last_gemini_male_voice_id": chosen_male_id,
-        })
-        _VOICE_STATE_FILE.write_text(
-            json.dumps(new_state, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except Exception as exc:
-        LOGGER.warning("Failed to save voice state: %s", exc)
-
-    return next_voice, next_name, next_gender
+        pass
+        
+    return engine, voice_id, gender
 
 
 # Edge-TTS Arabic broadcast voices
@@ -658,9 +595,7 @@ def _generate_tts_gemini(
         gender = "female" if voice_id == GEMINI_VOICE_FEMALE_KORE else "male"
         voice_label = f"🎙️ {selected_voice}"
     else:
-        selected_voice, voice_name, gender = _get_next_gemini_voice()
-        gender_icon = "👨 ذكر" if gender == "male" else "👩 أنثى"
-        voice_label = f"{gender_icon} - {voice_name}"
+        raise ValueError("voice_id is now strictly required for Gemini TTS.")
 
     print(f"🎤 المذيع المختار لهذا الريلز (Gemini): {voice_label} ({selected_voice})")
 
@@ -804,44 +739,49 @@ def generate_news_audio(
             return str(output_file), word_timestamps
         print("🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs، جاري الانتقال إلى محرك Gemini TTS...")
     else:
-        print("⚡ [محرك ElevenLabs معطل - ENABLE_ELEVENLABS=False] جاري الانتقال مباشرة إلى محرك Gemini TTS...")
+        print("⚡ [محرك ElevenLabs معطل - ENABLE_ELEVENLABS=False] جاري اختيار الصوت حسب الدورة المحددة (أوروس -> مريم -> جمال)...")
+        engine_type, selected_voice, gender = _get_next_free_voice()
 
-    # 2. Gemini Flash TTS Engine
-    print("🎙️ جاري توليد التعليق الصوتي الإخباري عبر محرك Google Gemini Flash TTS...")
-    success, word_timestamps, gender = _generate_tts_gemini(clean_text, output_file)
-    if success and output_file.exists() and output_file.stat().st_size > 1000:
-        file_size_kb = output_file.stat().st_size / 1024
-        print(f"✅ تم توليد التعليق الصوتي عبر Gemini TTS بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
-        return str(output_file), word_timestamps
+        if engine_type == "gemini":
+            print(f"🎙️ [الدورة: Gemini] جاري التوليد بصوت أوروس ({selected_voice})...")
+            success, word_timestamps, gender = _generate_tts_gemini(clean_text, output_file, voice_id=selected_voice)
+            if success and output_file.exists() and output_file.stat().st_size > 1000:
+                file_size_kb = output_file.stat().st_size / 1024
+                print(f"✅ تم توليد التعليق الصوتي عبر Gemini TTS بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
+                return str(output_file), word_timestamps
+            print("⚠️ [تنبيه] تعذر التوليد عبر Gemini TTS، جاري التحويل للمحرك البديل Edge-TTS...")
+            selected_voice = EDGE_VOICE_MALE
 
-    # 3. Fallback Engine: Microsoft Edge-TTS
-    print("🔄 [التبديل التلقائي] تعذر التوليد عبر Gemini TTS، جاري التبديل للمحرك الاحتياطي (Edge-TTS)...")
-    if gender == "female":
-        edge_voice = EDGE_VOICE_FEMALE  # ar-YE-MaryamNeural
-        print(f"🎤 [Edge-TTS البديل] مذيعة: مريم ({edge_voice})")
-    else:
-        edge_voice = EDGE_VOICE_MALE    # ar-MA-JamalNeural
-        print(f"🎤 [Edge-TTS البديل] مذيع: جمال المغربي ({edge_voice})")
+        # Edge-TTS Engine (Either chosen by rotation or as fallback)
+        voice_label = "مريم (أنثى)" if selected_voice == EDGE_VOICE_FEMALE else "جمال (ذكر)"
+        print(f"🎙️ [الدورة: Edge-TTS] جاري التوليد بصوت: {voice_label} ({selected_voice})...")
 
-    try:
-        loop = _get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(_run_async_edge_tts, clean_text, str(output_file), edge_voice, rate, pitch, volume)
-                success, word_timestamps = future.result(timeout=60)
-        else:
-            success, word_timestamps = loop.run_until_complete(
-                _generate_tts_edge_async(clean_text, str(output_file), edge_voice, rate, pitch, volume)
-            )
-    except Exception as exc:
-        LOGGER.error("Edge-TTS generation failed: %s", exc)
-        return None, []
+        try:
+            loop = _get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(_run_async_edge_tts, clean_text, str(output_file), selected_voice, rate, pitch, volume)
+                    success, word_timestamps = future.result(timeout=60)
+            else:
+                success, word_timestamps = loop.run_until_complete(
+                    _generate_tts_edge_async(clean_text, str(output_file), selected_voice, rate, pitch, volume)
+                )
+        except Exception as exc:
+            LOGGER.error("Edge-TTS generation failed: %s", exc)
+            success = False
 
-    if success and output_file.exists() and output_file.stat().st_size > 1000:
-        file_size_kb = output_file.stat().st_size / 1024
-        print(f"✅ تم توليد التعليق الصوتي عبر المحرك الاحتياطي Edge-TTS ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة.")
-        return str(output_file), word_timestamps
+        if success and output_file.exists() and output_file.stat().st_size > 1000:
+            file_size_kb = output_file.stat().st_size / 1024
+            print(f"✅ تم توليد التعليق الصوتي عبر Edge-TTS بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة.")
+            return str(output_file), word_timestamps
+            
+        print("⚠️ [تنبيه] تعذر التوليد عبر Edge-TTS (احتمال حظر من السيرفر)، جاري استخدام Gemini أوروس كبديل طوارئ...")
+        success, word_timestamps, gender = _generate_tts_gemini(clean_text, output_file, voice_id=GEMINI_VOICE_MALE_ORUS)
+        if success and output_file.exists() and output_file.stat().st_size > 1000:
+            file_size_kb = output_file.stat().st_size / 1024
+            print(f"✅ تم توليد التعليق الصوتي عبر بديل الطوارئ Gemini TTS بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة!")
+            return str(output_file), word_timestamps
 
     print("❌ تعذر توليد التعليق الصوتي عبر جميع المحركات.")
     return None, []
