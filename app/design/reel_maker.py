@@ -170,7 +170,7 @@ def _render_scene_clip_ffmpeg(
     duration: float,
     output_clip_path: Path,
     scene_index: int,
-    fps: int = 24,
+    fps: int = 30,
     zoom_factor: float = 1.14,
 ) -> Path:
     """Render a single scene image into a video clip with Ken Burns motion using FFmpeg zoompan."""
@@ -246,7 +246,7 @@ def compose_news_reel(
     source_attribution: str = "",
     slug: str = "reel",
     zoom_factor: float = 1.14,
-    fps: int = 24,
+    fps: int = 30,
 ) -> Optional[str]:
     """Compose a multi-scene news reel video with kinetic karaoke subtitles using native FFmpeg.
 
@@ -471,6 +471,16 @@ def compose_news_reel(
             "veryfast",
             "-crf",
             "19",
+            "-g",
+            str(fps * 2),
+            "-keyint_min",
+            str(fps),
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
             "-pix_fmt",
             "yuv420p",
             "-r",
@@ -480,7 +490,9 @@ def compose_news_reel(
             "-b:a",
             "192k",
             "-ar",
-            "44100",
+            "48000",
+            "-ac",
+            "2",
             "-t",
             f"{total_duration:.3f}",
             "-movflags",
