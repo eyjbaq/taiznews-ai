@@ -46,7 +46,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "generated_audio"
 
 # ElevenLabs engine toggle: when False, ElevenLabs API is bypassed and Gemini TTS is used directly
-ENABLE_ELEVENLABS: bool = False
+ENABLE_ELEVENLABS: bool = True
 if os.getenv("ENABLE_ELEVENLABS", "").lower() in ("true", "1"):
     ENABLE_ELEVENLABS = True
 
