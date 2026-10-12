@@ -457,9 +457,9 @@ def _generate_tts_elevenlabs(
             "similarity_boost": 0.80,
             "style": 0.25,
             "use_speaker_boost": True,
-            "speed": 1.05,
+            "speed": 1.15,
         },
-        "speed": 1.05,
+        "speed": 1.15,
     }
 
     current_voice = selected_voice
