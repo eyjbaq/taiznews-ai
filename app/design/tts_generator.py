@@ -453,13 +453,13 @@ def _generate_tts_elevenlabs(
         "text": text,
         "model_id": ELEVENLABS_MODEL_ID,
         "voice_settings": {
-            "stability": 0.38,
-            "similarity_boost": 0.80,
-            "style": 0.25,
+            "stability": 0.60,
+            "similarity_boost": 0.85,
+            "style": 0.0,
             "use_speaker_boost": True,
-            "speed": 1.15,
+            "speed": 1.16,
         },
-        "speed": 1.15,
+        "speed": 1.16,
     }
 
     current_voice = selected_voice
