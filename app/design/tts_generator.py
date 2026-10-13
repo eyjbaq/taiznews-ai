@@ -64,8 +64,8 @@ VOICE_MALE_ADAM = os.getenv("ELEVENLABS_VOICE_ADAM", "pNInz6obpgDQGcFmaJgB")
 AUTHORIZED_VOICE_IDS = [VOICE_MALE_ADAM]
 MALE_VOICE_IDS = [VOICE_MALE_ADAM]
 
-# Primary Model: eleven_turbo_v2_5 (50% cheaper credits, fast generation)
-ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+# Primary Model: eleven_multilingual_v2 (Standard Flagship Model for natural Arabic delivery)
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
 
 # Gemini TTS Models Cascading Priority Order (Single-attempt fallback: 3.8 -> 3.1 -> 2.5 -> 3.8 Lite)
 GEMINI_TTS_CASCADING_MODELS = [
@@ -453,13 +453,13 @@ def _generate_tts_elevenlabs(
         "text": text,
         "model_id": ELEVENLABS_MODEL_ID,
         "voice_settings": {
-            "stability": 0.38,
-            "similarity_boost": 0.85,
-            "style": 0.25,
+            "stability": 0.50,
+            "similarity_boost": 0.75,
+            "style": 0.0,
             "use_speaker_boost": True,
-            "speed": 1.16,
+            "speed": 1.15,
         },
-        "speed": 1.16,
+        "speed": 1.15,
     }
 
     current_voice = selected_voice
