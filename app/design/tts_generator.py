@@ -453,9 +453,9 @@ def _generate_tts_elevenlabs(
         "text": text,
         "model_id": ELEVENLABS_MODEL_ID,
         "voice_settings": {
-            "stability": 0.60,
+            "stability": 0.38,
             "similarity_boost": 0.85,
-            "style": 0.0,
+            "style": 0.25,
             "use_speaker_boost": True,
             "speed": 1.16,
         },
