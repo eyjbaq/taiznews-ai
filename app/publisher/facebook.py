@@ -356,6 +356,37 @@ class FacebookPublisher:
             print(f"❌ استثناء أثناء نشر الفيديو على فيسبوك: {exc}")
             return None
 
+    def publish_comment(
+        self,
+        object_id: str,
+        message: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Publish a comment to a post or video (e.g. pinned first comment engagement question)."""
+        if not message or not object_id:
+            return None
+
+        if self.dry_run:
+            print(f"💬 [DRY RUN] تم تجاوز نشر التعليق الأول على فيسبوك:\n   \"{message}\"")
+            return {"id": f"mock_comment_{int(time.time())}"}
+
+        url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{object_id}/comments"
+        data = {
+            "message": message,
+            "access_token": self.access_token,
+        }
+        try:
+            resp = requests.post(url, data=data, timeout=30)
+            if resp.status_code == 200:
+                res = resp.json()
+                print(f"💬 تم نشر التعليق التفاعلي الأول بنجاح على فيسبوك!")
+                return res
+            else:
+                LOGGER.warning("Failed to publish comment (%d): %s", resp.status_code, resp.text)
+                return None
+        except Exception as exc:
+            LOGGER.warning("Exception publishing Facebook comment: %s", exc)
+            return None
+
 
 def publish_news_card(
     image_path: Path | str,
