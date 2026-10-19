@@ -1,10 +1,10 @@
 {
-  "last_gender": "female",
-  "last_voice_id": "JjTirzdD7T3GMLkwdd3a",
+  "last_gender": "male",
+  "last_voice_id": "pNInz6obpgDQGcFmaJgB",
   "last_male_voice_id": "pNInz6obpgDQGcFmaJgB",
-  "last_voice_name": "حميدة (Hamida)",
+  "last_voice_name": "آدم (Adam)",
   "last_gemini_gender": "male",
   "last_gemini_male_voice_id": "Charon",
   "last_free_voice_index": 0,
-  "last_voice_rotation_index": 2
+  "last_voice_rotation_index": 0
 }
