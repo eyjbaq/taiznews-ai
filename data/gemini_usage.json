@@ -8,12 +8,12 @@
     "last_request_at": "2026-10-19T15:28:00.154859+00:00"
   },
   "gemini-3.5-flash": {
-    "usage_count": 0,
+    "usage_count": 3,
     "daily_limit": 20,
-    "first_request_at": null,
-    "exhausted_at": "2026-10-19T16:03:56.140039+00:00",
-    "exhausted_reason": "429 Quota Exceeded",
-    "last_request_at": "2026-10-18T13:10:07.316537+00:00"
+    "first_request_at": "2026-10-20T19:58:04.072712+00:00",
+    "exhausted_at": null,
+    "exhausted_reason": null,
+    "last_request_at": "2026-10-20T19:59:25.429340+00:00"
   },
   "gemini-2.5-flash": {
     "usage_count": 0,
@@ -23,9 +23,9 @@
     "exhausted_reason": null
   },
   "gemini-3.5-flash-lite": {
-    "usage_count": 12,
+    "usage_count": 0,
     "daily_limit": 500,
-    "first_request_at": "2026-10-19T15:30:16.747141+00:00",
+    "first_request_at": null,
     "exhausted_at": null,
     "exhausted_reason": null,
     "last_request_at": "2026-10-20T13:30:45.355614+00:00"
