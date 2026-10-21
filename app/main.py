@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Ensure project root is in sys.path for direct execution
+# Ensure project root is in sys.path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -36,11 +36,6 @@ from app.design.renderer import NewsCardRenderer
 from app.design.ai_image import generate_ai_image, generate_ai_images
 from app.design.tts_generator import generate_news_audio
 from app.design.reel_maker import compose_news_reel
-from app.ai.viral_editorial import (
-    get_next_reel_engine,
-    record_reel_engine_used,
-    process_viral_editorial,
-)
 from app.publisher.facebook import FacebookPublisher, format_facebook_caption, format_facebook_reel_caption
 
 
@@ -319,28 +314,11 @@ def run_pipeline(
                         break
 
             else:
-                # ─── المنشور الثاني: إنشاء ونشر مقطع ريلز سينمائي (تناوب ذكي: فيروسي / كلاسيكي) ───
-                engine_mode = get_next_reel_engine()
-                mode_label = "النمط الفيروسي (Viral Hooks & Loop)" if engine_mode == "viral" else "النمط الكلاسيكي (Classic News)"
-                print(f"\n[🎬 المنشور الثاني: إنشاء ونشر مقطع ريلز بنظام التناوب الذكي: {mode_label}]...")
-
-                reel_post = post
-                if engine_mode == "viral":
-                    print("🚀 [المحرك الفيروسي] صياغة الخبر بالخطافات الثلاثة وجسر الحلقة اللانهائية...")
-                    try:
-                        viral_post = process_viral_editorial(article, recent_posts_context=recent_posts_context)
-                        if viral_post and viral_post.should_publish:
-                            reel_post = viral_post
-                            print(f"✨ تم اعتماد السكربت الفيروسي بنجاح: {reel_post.headline}")
-                    except Exception as viral_err:
-                        LOGGER.warning("Viral editorial processing failed, falling back to classic: %s", viral_err)
-                        print(f"⚠️ تعذر الصياغة الفيروسية ({viral_err})، استخدام الصياغة الإخبارية البديلة.")
-                else:
-                    print("📰 [المحرك الكلاسيكي] اعتماد الصياغة الإخبارية الرصينة المعتادة للريلز...")
-
+                # ─── المنشور الثاني: نشر فوري لمقطع ريلز سينمائي ───
+                print(f"\n[🎬 المنشور الثاني: إنشاء ونشر مقطع ريلز سينمائي فورياً]...")
                 reel_path = None
                 try:
-                    reel_path = _create_reel_for_article(reel_post, article)
+                    reel_path = _create_reel_for_article(post, article)
                 except Exception as reel_err:
                     LOGGER.error("Failed creating news reel: %s", reel_err)
                     print(f"⚠️ تعذر إنشاء مقطع الريلز: {reel_err}")
@@ -348,18 +326,14 @@ def run_pipeline(
                 pub_result = None
                 if dry_run:
                     print("🧪 [DRY RUN] تم تجاوز النشر على فيسبوك بنجاح.")
-                    pub_result = {"id": f"dry_run_{int(time.time())}", "mode": f"reel_{engine_mode}"}
+                    pub_result = {"id": f"dry_run_{int(time.time())}", "mode": "reel"}
                 elif reel_path:
-                    reel_caption = format_facebook_reel_caption(reel_post, article)
+                    reel_caption = format_facebook_reel_caption(post, article)
                     pub_result = facebook_publisher.publish_reel(
                         video_path=reel_path,
                         caption=reel_caption,
-                        title=reel_post.headline,
+                        title=post.headline,
                     )
-                    # نشر سؤال التعليق الأول التفاعلي لزيادة انتشار الفيديو
-                    first_comment = getattr(reel_post, "first_comment_question", "")
-                    if pub_result and first_comment and "id" in pub_result:
-                        facebook_publisher.publish_comment(pub_result["id"], first_comment)
                 else:
                     # Fallback to card photo if reel creation failed
                     print("🔄 استخدام بطاقة الخبر البديلة للنشر الفوري بدلاً من الريلز المتعثر...")
@@ -372,13 +346,11 @@ def run_pipeline(
                         )
 
                 if pub_result:
-                    if reel_path:
-                        record_reel_engine_used(engine_mode)
-                    record_published_post(reel_post, article, pub_result)
+                    record_published_post(post, article, pub_result)
                     save_processed_urls([article.url], DEFAULT_PROCESSED_PATH)
-                    published_posts.append((article, reel_post, pub_result, f"reel_{engine_mode}" if reel_path else "photo"))
+                    published_posts.append((article, post, pub_result, "reel" if reel_path else "photo"))
                     recent_posts_context = get_recent_published_summary(limit=5)
-                    print(f"🎉 تم تسجيل المنشور الثاني بنجاح ({mode_label})!")
+                    print(f"🎉 تم تسجيل المنشور الثاني بنجاح!")
                 else:
                     if facebook_publisher.last_error_code in (190, 102, 10):
                         print("\n" + "=" * 65)

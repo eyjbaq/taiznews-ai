@@ -19,7 +19,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-# Ensure project root is in sys.path for direct execution
+from typing import Dict, List
+
+# Ensure project root is in sys.path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -40,11 +42,6 @@ from app.processing.normalize import normalize_articles
 from app.processing.relevance import filter_relevant
 from app.processing.history import get_recent_published_summary
 from app.ai.editorial import process_article
-from app.ai.viral_editorial import (
-    get_next_reel_engine,
-    record_reel_engine_used,
-    process_viral_editorial,
-)
 from app.ai.quota_manager import QUOTA_MANAGER
 from app.design.ai_image import generate_ai_image, generate_ai_images
 from app.design.tts_generator import generate_news_audio
@@ -88,15 +85,11 @@ def score_article(article: Article) -> float:
     return score
 
 
-def run_reels_test(visual_mode: str = "image", engine: str = "alternate") -> None:
+def run_reels_test(visual_mode: str = "image") -> None:
     """Run a local dry-run test of the full Reels pipeline for one article."""
 
-    active_engine = get_next_reel_engine() if engine == "alternate" else engine
-    engine_title = "النمط الفيروسي (Viral Hooks & Loop)" if active_engine == "viral" else "النمط الكلاسيكي (Classic News)"
-
     print("\n" + "=" * 70)
-    print(f"🎬 === TaizNews AI | News Reels Engine — اختبار محلي [{engine_title}] === 🎬")
-    print(f"⚙️ المحرك النشط: {active_engine.upper()} (وضع الاختيار: {engine})")
+    print(f"🎬 === TaizNews AI | News Reels Engine — اختبار محلي (النمط: {visual_mode}) === 🎬")
     print("=" * 70)
 
     # ─── Phase 1: News Collection ───
@@ -151,17 +144,9 @@ def run_reels_test(visual_mode: str = "image", engine: str = "alternate") -> Non
     print(f"   الرابط: {target_article.url}")
     print(f"   نقاط الأهمية: {score_article(target_article):.1f}")
 
-    print(f"\n🤖 المرحلة 2: الصياغة التحريرية عبر Gemini ({engine_title})...")
+    print(f"\n🤖 المرحلة 2: الصياغة التحريرية عبر Gemini...")
     recent_posts_context = get_recent_published_summary(limit=5)
-
-    def _process(art: Article) -> Optional[EditorialPost]:
-        if active_engine == "viral":
-            v_post = process_viral_editorial(art, recent_posts_context=recent_posts_context)
-            if v_post and v_post.should_publish:
-                return v_post
-        return process_article(art, recent_posts_context=recent_posts_context)
-
-    post = _process(target_article)
+    post = process_article(target_article, recent_posts_context=recent_posts_context)
 
     if not post:
         print("❌ تعذرت الصياغة التحريرية. إيقاف الاختبار.")
@@ -173,7 +158,7 @@ def run_reels_test(visual_mode: str = "image", engine: str = "alternate") -> Non
 
         for fallback in qualified[1:3]:
             print(f"\n📰 تجربة الخبر البديل: {fallback.title}")
-            post = _process(fallback)
+            post = process_article(fallback, recent_posts_context=recent_posts_context)
             if post and post.should_publish:
                 target_article = fallback
                 break
@@ -269,11 +254,8 @@ def run_reels_test(visual_mode: str = "image", engine: str = "alternate") -> Non
     print(f"\n🎙️ التعليق الصوتي:\n   {audio_path}")
 
     if reel_path:
-        record_reel_engine_used(active_engine)
-        print(f"\n🎬 مقطع الريلز النهائي ({visual_mode} | {active_engine.upper()}):\n   {reel_path}")
+        print(f"\n🎬 مقطع الريلز النهائي ({visual_mode}):\n   {reel_path}")
         print(f"\n🎉 ✅ نجح الاختبار بالكامل! يمكنك فتح ملف الفيديو ومشاهدته محلياً.")
-        next_engine = get_next_reel_engine()
-        print(f"🔄 المحرك التالي في دورة التناوب القادمة: [{next_engine.upper()}]")
     else:
         print(f"\n❌ فشل تركيب مقطع الريلز.")
 
@@ -295,14 +277,8 @@ def main() -> None:
         default=os.getenv("VISUAL_MODE", "image"),
         help="Visual mode: 'image' (default) or 'video' (Pexels B-Roll)",
     )
-    parser.add_argument(
-        "--engine",
-        choices=["alternate", "viral", "classic"],
-        default=os.getenv("REEL_ENGINE_MODE", "alternate"),
-        help="Reel engine: 'alternate' (A/B testing, default), 'viral' (Viral Hooks & Loop), or 'classic' (Standard News)",
-    )
     args = parser.parse_args()
-    run_reels_test(visual_mode=args.visual_mode, engine=args.engine)
+    run_reels_test(visual_mode=args.visual_mode)
 
 
 if __name__ == "__main__":
