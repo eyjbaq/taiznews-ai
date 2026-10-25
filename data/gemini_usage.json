@@ -23,12 +23,12 @@
     "exhausted_reason": null
   },
   "gemini-3.5-flash-lite": {
-    "usage_count": 2,
+    "usage_count": 4,
     "daily_limit": 500,
     "first_request_at": "2026-10-25T04:13:45.449608+00:00",
     "exhausted_at": null,
     "exhausted_reason": null,
-    "last_request_at": "2026-10-25T04:14:12.569040+00:00"
+    "last_request_at": "2026-10-25T13:07:59.986380+00:00"
   },
   "gemini-3.1-flash-lite": {
     "usage_count": 0,
