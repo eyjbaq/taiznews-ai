@@ -1,9 +1,9 @@
 {
   "version": 1,
   "created_at": "2026-11-11T02:54:03.124238+00:00",
-  "updated_at": "2026-11-12T01:45:49.131355+00:00",
-  "last_sync_at": "2026-11-12T01:45:45.400285+00:00",
-  "total_posts_analyzed": 2,
+  "updated_at": "2026-11-12T09:38:19.620141+00:00",
+  "last_sync_at": "2026-11-12T09:38:14.353821+00:00",
+  "total_posts_analyzed": 3,
   "daily_caps": {
     "max_daily_reels": 4,
     "max_daily_photos": 10,
@@ -24,9 +24,9 @@
       "weight": 1.0
     },
     "standard_reel": {
-      "count": 2,
-      "total_engagement": 6,
-      "avg_engagement": 3.0,
+      "count": 3,
+      "total_engagement": 15,
+      "avg_engagement": 5.0,
       "weight": 1.0
     },
     "map_reel": {
@@ -44,15 +44,15 @@
       "weight": 1.0
     },
     "أمن": {
-      "count": 0,
-      "total_engagement": 0,
-      "avg_engagement": 0.0,
-      "weight": 1.0
+      "count": 1,
+      "total_engagement": 7,
+      "avg_engagement": 7.0,
+      "weight": 1.4
     },
     "خدمات": {
       "count": 1,
-      "total_engagement": 0,
-      "avg_engagement": 0.0,
+      "total_engagement": 2,
+      "avg_engagement": 2.0,
       "weight": 0.5
     },
     "اقتصاد": {
@@ -71,7 +71,7 @@
       "count": 1,
       "total_engagement": 6,
       "avg_engagement": 6.0,
-      "weight": 2.0
+      "weight": 1.2
     }
   },
   "voice_performance": {
@@ -88,9 +88,9 @@
       "weight": 1.0
     },
     "saleh": {
-      "count": 0,
-      "total_engagement": 0,
-      "avg_engagement": 0.0,
+      "count": 1,
+      "total_engagement": 7,
+      "avg_engagement": 7.0,
       "weight": 1.0
     },
     "ali": {
@@ -109,8 +109,8 @@
   "hourly_engagement": {
     "01": {
       "count": 1,
-      "total_engagement": 0,
-      "avg_engagement": 0.0,
+      "total_engagement": 2,
+      "avg_engagement": 2.0,
       "weight": 1.0
     },
     "08": {
@@ -118,7 +118,13 @@
       "total_engagement": 6,
       "avg_engagement": 6.0,
       "weight": 1.0
+    },
+    "04": {
+      "count": 1,
+      "total_engagement": 7,
+      "avg_engagement": 7.0,
+      "weight": 1.0
     }
   },
-  "learnings_summary": "تم تحليل 2 منشوراً | أفضل صيغة: standard_reel (متوسط 3.0) | أعلى تصنيف تفاعلاً: مجتمع (6.0)"
+  "learnings_summary": "تم تحليل 3 منشوراً | أفضل صيغة: standard_reel (متوسط 5.0) | أعلى تصنيف تفاعلاً: أمن (7.0) | أفضل صوت: saleh (7.0)"
 }

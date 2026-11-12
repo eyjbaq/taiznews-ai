@@ -1,11 +1,11 @@
 {
   "last_gender": "male",
-  "last_voice_id": "ar-YE-SalehNeural",
+  "last_voice_id": "ar-BH-AliNeural",
   "last_male_voice_id": "pNInz6obpgDQGcFmaJgB",
-  "last_voice_name": "صالح اليمني (Saleh)",
+  "last_voice_name": "علي البحريني (Ali)",
   "last_gemini_gender": "male",
   "last_gemini_male_voice_id": "Charon",
   "last_free_voice_index": 0,
-  "last_voice_rotation_index": 1,
-  "last_voice_key": "saleh"
+  "last_voice_rotation_index": 2,
+  "last_voice_key": "ali"
 }
