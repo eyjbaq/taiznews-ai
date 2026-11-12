@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -95,10 +96,39 @@ def _entry_image_url(entry: Any) -> Optional[str]:
     return None
 
 
+def _has_non_arabic_foreign_script(text: str) -> bool:
+    """Detect non-Arabic, non-ASCII-Latin scripts (e.g., CJK / Cyrillic) in outlet names."""
+    for ch in text:
+        code = ord(ch)
+        if code <= 127:
+            continue
+        is_arabic = (0x0600 <= code <= 0x06FF) or (0x0750 <= code <= 0x077F) or (0x08A0 <= code <= 0x08FF)
+        is_common_punct = ch in "«»–—’‘“”•…"
+        if not is_arabic and not is_common_punct:
+            return True
+    return False
+
+
 def _entry_to_article(entry: Any, source_name: str) -> Optional[Article]:
     title = str(getattr(entry, "title", "")).strip()
     url = str(getattr(entry, "link", "")).strip()
     if not title or not url:
+        return None
+
+    # Clean trailing " - <Publisher>" appended by Google News; reject foreign non-Arabic/non-Latin outlets
+    if "جوجل نيوز" in source_name and " - " in title:
+        headline_part, publisher_part = title.rsplit(" - ", 1)
+        publisher_clean = publisher_part.strip()
+        if publisher_clean and _has_non_arabic_foreign_script(publisher_clean):
+            LOGGER.debug("Skipping Google News article from foreign-script publisher '%s': %s", publisher_clean, title)
+            return None
+        if headline_part.strip():
+            title = headline_part.strip()
+    elif _has_non_arabic_foreign_script(title):
+        return None
+
+    title = re.sub(r"^(?:\(وسائط متعددة\)\s*)+", "", title).strip()
+    if not title:
         return None
 
     description = getattr(entry, "summary", None) or getattr(entry, "description", None) or ""
@@ -132,13 +162,8 @@ def fetch_rss_articles(
                 LOGGER.warning("RSS source failed (%s): HTTP status %d", source_name, response.status_code)
                 return []
 
-            content_type = response.headers.get("Content-Type", "").lower()
-            text_prefix = response.text.lstrip()[:100].lower()
-            if (
-                not any(sub in content_type for sub in ("xml", "rss", "atom"))
-                or text_prefix.startswith("<!doctype html")
-                or text_prefix.startswith("<html")
-            ):
+            text_prefix = response.text.lstrip("\ufeff \t\r\n")[:100].lower()
+            if text_prefix.startswith("<!doctype html") or text_prefix.startswith("<html"):
                 LOGGER.warning("RSS source skipped (%s): HTML response received instead of XML", source_name)
                 return []
 

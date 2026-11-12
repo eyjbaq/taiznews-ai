@@ -3,7 +3,7 @@ name: TaizNews AI Automated Newsroom
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */4 * * *' # تعمل كل 4 ساعات تلقائياً
+    - cron: '0 * * * *' # يعمل تلقائياً كل ساعة بقيادة العقل المركزي
 
 permissions:
   contents: write
@@ -58,4 +58,4 @@ jobs:
           git config --global user.name "taiznews-bot"
           git config --global user.email "bot@taiznews.ai"
           git add data/*.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: sync published history [skip ci]" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: sync brain memory & published history [skip ci]" && git pull --rebase --autostash && git push)

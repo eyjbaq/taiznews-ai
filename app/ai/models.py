@@ -64,10 +64,55 @@ class EditorialPost(BaseModel):
             "'destroyed buildings', 'Middle East city aerial', 'Yemen architecture')."
         )
     )
+    chosen_format: str = Field(
+        default="photo_card",
+        description="Selected post format: text_satire, photo_card, standard_reel, or map_reel."
+    )
+    scope: str = Field(
+        default="taiz",
+        description="News scope: taiz or yemen_trend."
+    )
+    candidate_index: int = Field(
+        default=1,
+        description="1-based index of the selected candidate article from the batch list."
+    )
+    satirical_text: str = Field(
+        default="",
+        description="Short satirical political/social post in Yemeni dialect when chosen_format == 'text_satire'."
+    )
+    district_name: str = Field(
+        default="مدينة تعز",
+        description="Target Taiz district name when chosen_format == 'map_reel'."
+    )
+    map_label: str = Field(
+        default="",
+        description="Short Arabic pin label displayed on the map when chosen_format == 'map_reel'."
+    )
+    location_chip_text: str = Field(
+        default="",
+        description="Location header chip text when chosen_format == 'map_reel'."
+    )
+    hook_text: str = Field(
+        default="",
+        description="Concise opening hook line when chosen_format == 'map_reel'."
+    )
+    teaser: str = Field(
+        default="",
+        description="Short teaser overlay/caption when chosen_format == 'map_reel'."
+    )
+    is_military: bool = Field(
+        default=False,
+        description="True for military or security events requiring tactical map styling."
+    )
 
     @model_validator(mode="after")
     def sync_content_fields(self) -> "EditorialPost":
-        """Ensure clean_content, vocalized_content, and body stay synchronized."""
+        """Ensure satirical_text, clean_content, vocalized_content, and body stay synchronized."""
+        if self.chosen_format == "text_satire":
+            if self.satirical_text and not self.clean_content:
+                self.clean_content = self.satirical_text
+            elif self.clean_content and not self.satirical_text:
+                self.satirical_text = self.clean_content
         if not self.clean_content and self.body:
             self.clean_content = self.body
         if not self.body and self.clean_content:
@@ -75,5 +120,22 @@ class EditorialPost(BaseModel):
         if not self.vocalized_content and self.clean_content:
             self.vocalized_content = self.clean_content
         return self
+
+
+class BatchEditorialResponse(BaseModel):
+    """Structured output for the single-call batch editorial triage and drafting engine."""
+
+    decision: str = Field(
+        default="SKIP",
+        description="PUBLISH if a candidate merits publishing, or SKIP if candidates are weak, duplicate, or below threshold."
+    )
+    skip_reason: str = Field(
+        default="",
+        description="Short explanation when decision == 'SKIP'."
+    )
+    selected_posts: List[EditorialPost] = Field(
+        default_factory=list,
+        description="Selected and fully drafted posts (typically 1, or up to max_selections during peak hours)."
+    )
 
 

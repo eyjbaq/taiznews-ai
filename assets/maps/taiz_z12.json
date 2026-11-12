@@ -1,0 +1,19 @@
+{
+  "zoom": 12,
+  "origin_px": [
+    649680,
+    483248
+  ],
+  "size": [
+    4370,
+    4190
+  ],
+  "bbox": [
+    13.95,
+    43.05,
+    12.55,
+    44.55
+  ],
+  "provider": "maptiler",
+  "attribution": "© MapTiler © OpenStreetMap contributors"
+}

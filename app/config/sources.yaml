@@ -43,3 +43,11 @@ sources:
   - name: "فرانس 24"
     feed_url: "https://www.france24.com/ar/rss"
     reliability: 90
+
+  - name: "جوجل نيوز (تعز)"
+    feed_url: "https://news.google.com/rss/search?q=%D8%AA%D8%B9%D8%B2+%D8%A7%D9%84%D9%8A%D9%85%D9%86+when:1d&hl=ar&gl=YE&ceid=YE:ar"
+    reliability: 88
+
+  - name: "جوجل نيوز (اليمن)"
+    feed_url: "https://news.google.com/rss/search?q=%D8%A7%D9%84%D9%8A%D9%85%D9%86+%D8%B9%D8%A7%D8%AC%D9%84+when:1d&hl=ar&gl=YE&ceid=YE:ar"
+    reliability: 85

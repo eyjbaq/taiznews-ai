@@ -44,6 +44,7 @@ def fetch_gdelt_articles(
         "query": query,
         "mode": "ArtList",
         "maxrecords": maxrecords,
+        "timespan": "24h",
         "format": "json",
     }
     try:

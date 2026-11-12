@@ -59,25 +59,49 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 VOICE_MALE_ADAM = os.getenv("ELEVENLABS_VOICE_ADAM", "pNInz6obpgDQGcFmaJgB")
 
 # Edge-TTS Broadcast Voices:
-EDGE_VOICE_FEMALE_MARYAM = "ar-YE-MaryamNeural"   # Maryam - Yemeni female news presenter
-EDGE_VOICE_MALE_JAMAL = "ar-MA-JamalNeural"       # Jamal - Moroccan male news presenter
+EDGE_VOICE_FEMALE_MARYAM = "ar-YE-MaryamNeural"    # Maryam - Yemeni female news presenter
+EDGE_VOICE_MALE_SALEH = "ar-YE-SalehNeural"       # Saleh - Yemeni male news presenter
+EDGE_VOICE_MALE_ALI = "ar-BH-AliNeural"           # Ali - Gulf/Arabic male news presenter
+EDGE_VOICE_FEMALE_ZARIYAH = "ar-SA-ZariyahNeural" # Zariyah - Arabic female news presenter
+EDGE_VOICE_MALE_JAMAL = "ar-MA-JamalNeural"       # Backwards compatibility alias
 DEFAULT_EDGE_VOICE = os.getenv("TTS_VOICE", EDGE_VOICE_FEMALE_MARYAM)
 
-# Two-Voice Alternation: Adam (Male/ElevenLabs) <-> Maryam (Female/Edge-TTS)
+# Five-Voice Broadcast Roster (4 Free Edge-TTS Voices + Adam via ElevenLabs)
 VOICE_ROTATION_LIST = [
-    {
-        "id": "adam",
-        "engine": "elevenlabs",
-        "voice_id": VOICE_MALE_ADAM,
-        "name": "آدم (Adam)",
-        "gender": "male",
-    },
     {
         "id": "maryam",
         "engine": "edge",
         "voice_id": EDGE_VOICE_FEMALE_MARYAM,
         "name": "مريم اليمنية (Maryam)",
         "gender": "female",
+    },
+    {
+        "id": "saleh",
+        "engine": "edge",
+        "voice_id": EDGE_VOICE_MALE_SALEH,
+        "name": "صالح اليمني (Saleh)",
+        "gender": "male",
+    },
+    {
+        "id": "ali",
+        "engine": "edge",
+        "voice_id": EDGE_VOICE_MALE_ALI,
+        "name": "علي البحريني (Ali)",
+        "gender": "male",
+    },
+    {
+        "id": "zariyah",
+        "engine": "edge",
+        "voice_id": EDGE_VOICE_FEMALE_ZARIYAH,
+        "name": "زارية الإخبارية (Zariyah)",
+        "gender": "female",
+    },
+    {
+        "id": "adam",
+        "engine": "elevenlabs",
+        "voice_id": VOICE_MALE_ADAM,
+        "name": "آدم (Adam)",
+        "gender": "male",
     },
 ]
 
@@ -101,8 +125,21 @@ GEMINI_VOICE_FEMALE_KORE = "Kore"
 GEMINI_VOICE_MALE_ORUS = "Orus"
 GEMINI_VOICE_MALE_CHARON = "Charon"
 
-# Voice alternation state file
+# Voice alternation state file & last-used voice tracker
 _VOICE_STATE_FILE = BASE_DIR / "data" / "voice_state.json"
+_LAST_USED_VOICE_KEY: str = "maryam"
+
+
+def get_last_used_voice_key() -> str:
+    """Return the short voice key ('maryam', 'saleh', 'ali', 'zariyah', 'adam') from the last TTS generation."""
+    return _LAST_USED_VOICE_KEY
+
+
+def _is_elevenlabs_ready() -> bool:
+    """Return True if ElevenLabs is enabled and an API key is configured."""
+    if not ENABLE_ELEVENLABS:
+        return False
+    return bool((os.getenv("ELEVENLABS_API_KEY") or ELEVENLABS_API_KEY or "").strip())
 
 
 def _read_voice_state() -> dict[str, Any]:
@@ -115,18 +152,21 @@ def _read_voice_state() -> dict[str, Any]:
     return {}
 
 
-def _get_next_rotated_voice() -> dict[str, Any]:
-    """Rotate sequentially between Adam (ElevenLabs) and Maryam (Edge-TTS)."""
+def _persist_used_voice(voice_info: dict[str, Any]) -> None:
+    """Update runtime _LAST_USED_VOICE_KEY and persist actual speaker state to voice_state.json."""
+    global _LAST_USED_VOICE_KEY
+    voice_key = str(voice_info.get("id") or "maryam").strip().lower()
+    _LAST_USED_VOICE_KEY = voice_key
+
     state = _read_voice_state()
-    last_index = state.get("last_voice_rotation_index", -1)
-    next_index = (last_index + 1) % len(VOICE_ROTATION_LIST)
-
-    chosen = VOICE_ROTATION_LIST[next_index]
-
-    state["last_voice_rotation_index"] = next_index
-    state["last_voice_id"] = chosen["voice_id"]
-    state["last_gender"] = chosen["gender"]
-    state["last_voice_name"] = chosen["name"]
+    for idx, item in enumerate(VOICE_ROTATION_LIST):
+        if item["id"] == voice_key:
+            state["last_voice_rotation_index"] = idx
+            break
+    state["last_voice_key"] = voice_key
+    state["last_voice_id"] = voice_info.get("voice_id", "")
+    state["last_gender"] = voice_info.get("gender", "")
+    state["last_voice_name"] = voice_info.get("name", "")
 
     try:
         _VOICE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +174,36 @@ def _get_next_rotated_voice() -> dict[str, Any]:
     except Exception as exc:
         LOGGER.warning("Could not persist voice state: %s", exc)
 
+
+def _get_next_rotated_voice() -> dict[str, Any]:
+    """Rotate sequentially through available voices (skipping Adam if ElevenLabs key is unavailable)."""
+    state = _read_voice_state()
+    available = [
+        v for v in VOICE_ROTATION_LIST
+        if v["engine"] != "elevenlabs" or _is_elevenlabs_ready()
+    ] or VOICE_ROTATION_LIST[:4]
+
+    last_key = str(state.get("last_voice_key") or "").strip().lower()
+    if last_key and any(v["id"] == last_key for v in available):
+        cur_idx = next(i for i, v in enumerate(available) if v["id"] == last_key)
+        chosen = available[(cur_idx + 1) % len(available)]
+    else:
+        last_index = int(state.get("last_voice_rotation_index", -1))
+        chosen = available[(last_index + 1) % len(available)]
     return chosen
+
+
+def _select_voice_entry(preferred_voice_key: Optional[str] = None) -> dict[str, Any]:
+    """Select requested voice if valid/available, otherwise pick next rotated voice."""
+    voice_by_id = {v["id"]: v for v in VOICE_ROTATION_LIST}
+    if preferred_voice_key:
+        clean_key = preferred_voice_key.strip().lower()
+        if clean_key in voice_by_id:
+            candidate = voice_by_id[clean_key]
+            if candidate["engine"] != "elevenlabs" or _is_elevenlabs_ready():
+                return candidate
+            LOGGER.info("Preferred voice '%s' unavailable without ElevenLabs API key; rotating.", clean_key)
+    return _get_next_rotated_voice()
 
 
 def _get_next_voice() -> tuple[str, str, str]:
@@ -679,13 +748,14 @@ def generate_news_audio(
     pitch: str = "+0Hz",
     volume: str = "+10%",
     vocalized_fallback_text: Optional[str] = None,
+    preferred_voice_key: Optional[str] = None,
 ) -> tuple[Optional[str], list[dict[str, Any]]]:
-    """Generate Arabic TTS audio and word timestamps with Adam (ElevenLabs) / Maryam (Edge-TTS) rotation.
+    """Generate Arabic TTS audio and word timestamps using CentralBrain voice selection or 5-voice rotation.
 
     Voice & Text Rules:
-      - Turn 1: آدم (Adam) - ElevenLabs (Male): text sent UNVOCALIZED (بدون تشكيل) to save credits and ensure brisk natural flow.
-      - Turn 2: مريم اليمنية (Maryam) - Edge-TTS (Female): text sent FULLY VOCALIZED (مشكول بالكامل) for classical Arabic eloquence.
-      - Fallback: Gracefully switches between Adam and Maryam if an engine is unavailable, with Gemini TTS backup.
+      - Edge-TTS Voices ('maryam', 'saleh', 'ali', 'zariyah'): FULLY VOCALIZED text for clear pronunciation.
+      - ElevenLabs ('adam'): UNVOCALIZED text (with 'تَعِز' protected) for fast, natural delivery.
+      - Fallback: Gracefully switches to backup voice/engine if primary fails and tracks actual speaker used.
     """
     if not text or not text.strip():
         LOGGER.warning("Empty text provided for TTS generation.")
@@ -697,81 +767,98 @@ def generate_news_audio(
     timestamp = int(time.time())
     output_file = out_dir / f"{slug}_{timestamp}.mp3"
 
-    # 1. Select next voice from rotation (Adam <-> Maryam)
-    voice_info = _get_next_rotated_voice()
-    target_engine = voice_info["engine"]
-    target_voice_id = voice_info["voice_id"]
-    voice_name = voice_info["name"]
-    gender = voice_info["gender"]
+    voice_by_id = {v["id"]: v for v in VOICE_ROTATION_LIST}
+    voice_info = _select_voice_entry(preferred_voice_key)
+    actual_voice_info = dict(voice_info)
+    target_engine = actual_voice_info["engine"]
+    target_voice_id = actual_voice_info["voice_id"]
+    voice_name = actual_voice_info["name"]
 
     print(f"🎙️ [الدورة الصوتية] المذيع المختار لهذا الفيديو: {voice_name} ({target_voice_id}) [المحرك: {target_engine.upper()}]")
 
-    # 2. Prepare text specifically for the selected voice
     if target_engine == "elevenlabs":
-        # Adam: Plain unvocalized text
         narration_text = _prepare_unvocalized_text(text)
         print("📝 [تجهيز النص] إرسال النص إلى آدم (ElevenLabs) بدون تشكيل لحفظ الرصيد وسرعة الإلقاء.")
     else:
-        # Maryam: Fully vocalized text with all tashkeel
         raw_vocalized = vocalized_fallback_text or text
         narration_text = _prepare_vocalized_text(raw_vocalized)
-        print("📝 [تجهيز النص] إرسال النص إلى مريم (Edge-TTS) مشكولاً بالكامل (تشكيل فصيح).")
+        print(f"📝 [تجهيز النص] إرسال النص إلى {voice_name} (Edge-TTS) مشكولاً بالكامل.")
 
     success = False
-    word_timestamps = []
+    word_timestamps: list[dict[str, Any]] = []
 
-    # 3. Execute primary engine
-    if target_engine == "elevenlabs" and ENABLE_ELEVENLABS:
+    def _run_edge_with_voice(voice_entry: dict[str, Any], edge_text: str) -> tuple[bool, list[dict[str, Any]]]:
+        print(f"🎙️ [Edge-TTS] جاري التوليد بصوت: {voice_entry['name']} ({voice_entry['voice_id']})...")
+        try:
+            loop = _get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(
+                        _run_async_edge_tts,
+                        edge_text,
+                        str(output_file),
+                        voice_entry["voice_id"],
+                        rate,
+                        pitch,
+                        volume,
+                    )
+                    return future.result(timeout=60)
+            return loop.run_until_complete(
+                _generate_tts_edge_async(edge_text, str(output_file), voice_entry["voice_id"], rate, pitch, volume)
+            )
+        except Exception as exc:
+            LOGGER.error("Edge-TTS generation failed (%s): %s", voice_entry["id"], exc)
+            return False, []
+
+    # 1. Primary execution
+    if target_engine == "elevenlabs" and _is_elevenlabs_ready():
         print(f"🎙️ جاري توليد التعليق الصوتي عبر محرك ElevenLabs API ({ELEVENLABS_MODEL_ID})...")
-        success, word_timestamps, gender = _generate_tts_elevenlabs(
+        success, word_timestamps, _ = _generate_tts_elevenlabs(
             text=narration_text,
             output_path=output_file,
             voice_id=target_voice_id,
         )
         if not success or not output_file.exists() or output_file.stat().st_size < 1000:
             print("🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs، الانتقال الفوري للبديل مريم اليمنية (Edge-TTS)...")
+            actual_voice_info = dict(voice_by_id["maryam"])
             target_engine = "edge"
-            target_voice_id = EDGE_VOICE_FEMALE_MARYAM
-            # Switch to vocalized text for Maryam
             raw_vocalized = vocalized_fallback_text or text
             narration_text = _prepare_vocalized_text(raw_vocalized)
 
     if target_engine == "edge" or not success:
-        voice_label = "مريم اليمنية (أنثى)" if target_voice_id == EDGE_VOICE_FEMALE_MARYAM else f"{target_voice_id}"
-        print(f"🎙️ [Edge-TTS] جاري التوليد بصوت: {voice_label} ({target_voice_id})...")
-        try:
-            loop = _get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    future = pool.submit(_run_async_edge_tts, narration_text, str(output_file), target_voice_id, rate, pitch, volume)
-                    success, word_timestamps = future.result(timeout=60)
-            else:
-                success, word_timestamps = loop.run_until_complete(
-                    _generate_tts_edge_async(narration_text, str(output_file), target_voice_id, rate, pitch, volume)
-                )
-        except Exception as exc:
-            LOGGER.error("Edge-TTS generation failed: %s", exc)
-            success = False
+        raw_vocalized = vocalized_fallback_text or text
+        edge_text = _prepare_vocalized_text(raw_vocalized)
+        success, word_timestamps = _run_edge_with_voice(actual_voice_info, edge_text)
 
-        if not success and ENABLE_ELEVENLABS:
+        if (not success or not output_file.exists() or output_file.stat().st_size < 1000) and actual_voice_info["id"] != "maryam":
+            print(f"🔄 [التبديل الاحتياطي] تعذر صوت {actual_voice_info['name']}، التبديل إلى مريم اليمنية (Edge-TTS)...")
+            actual_voice_info = dict(voice_by_id["maryam"])
+            success, word_timestamps = _run_edge_with_voice(actual_voice_info, edge_text)
+
+        if (not success or not output_file.exists() or output_file.stat().st_size < 1000) and _is_elevenlabs_ready():
             print("🔄 [التبديل الاحتياطي] تعذر توليد Edge-TTS، التبديل إلى ElevenLabs بصوت آدم...")
+            actual_voice_info = dict(voice_by_id["adam"])
             unvoc_text = _prepare_unvocalized_text(text)
-            success, word_timestamps, gender = _generate_tts_elevenlabs(
+            success, word_timestamps, _ = _generate_tts_elevenlabs(
                 text=unvoc_text,
                 output_path=output_file,
                 voice_id=VOICE_MALE_ADAM,
             )
 
-        if not success and ENABLE_GEMINI_TTS:
+        if (not success or not output_file.exists() or output_file.stat().st_size < 1000) and ENABLE_GEMINI_TTS:
             print("🔄 [بديل الطوارئ] تجربة Gemini TTS...")
-            success, word_timestamps, gender = _generate_tts_gemini(
-                narration_text, output_file, voice_id=GEMINI_VOICE_MALE_ORUS
+            success, word_timestamps, _ = _generate_tts_gemini(
+                edge_text, output_file, voice_id=GEMINI_VOICE_MALE_ORUS
             )
 
     if success and output_file.exists() and output_file.stat().st_size > 1000:
+        _persist_used_voice(actual_voice_info)
         file_size_kb = output_file.stat().st_size / 1024
-        print(f"✅ تم توليد التعليق الصوتي بنجاح ({file_size_kb:.0f} KB) وتحديد {len(word_timestamps)} كلمة متزامنة!")
+        print(
+            f"✅ تم توليد التعليق الصوتي بنجاح ({file_size_kb:.0f} KB) بصوت [{actual_voice_info['id']}] "
+            f"وتحديد {len(word_timestamps)} كلمة متزامنة!"
+        )
         return str(output_file), word_timestamps
 
     print("❌ تعذر توليد التعليق الصوتي عبر جميع المحركات المتاحة.")

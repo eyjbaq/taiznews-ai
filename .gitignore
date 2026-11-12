@@ -9,13 +9,15 @@ __pycache__/
 *$py.class
 *.tmp
 
-# Generated media assets (rendered dynamically in runners)
+# Generated media assets & caches (rendered dynamically in runners)
+data/downloaded_videos/
 data/generated_images/*
 !data/generated_images/.gitkeep
 data/generated_audio/*
 !data/generated_audio/.gitkeep
 data/generated_reels/*
 !data/generated_reels/.gitkeep
+data/tile_cache/
 *TEMP_MPY*
 *.mp4
 *.mp3
@@ -27,6 +29,18 @@ data/generated_reels/*
 Thumbs.db
 *.zip
 
-# Local isolated testing and prototyping sandbox
+# Local isolated testing, scripts, and temporary artifacts
 sandbox/
+scratch/
+test_*.py
+!app/test_reels.py
+analyze_pacing.py
+check_voices.py
+compare_voices.py
+download_model.py
+scratch_test_sync.py
+9.png
+Gemini_Generated_Image_*
+assets/maps/taiz_satellite_z12.png
+assets/maps/taiz_satellite_z12.json
 

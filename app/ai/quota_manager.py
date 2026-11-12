@@ -42,6 +42,24 @@ MODEL_SPECS: Dict[str, dict] = {
         "min_interval": 6.0,
         "is_lite": True,
     },
+    "gemini-2.5-flash": {
+        "daily_limit": 20,
+        "max_rpm": 3,
+        "min_interval": 20.0,
+        "is_lite": False,
+    },
+    "gemini-2.5-flash-lite": {
+        "daily_limit": 500,
+        "max_rpm": 10,
+        "min_interval": 6.0,
+        "is_lite": True,
+    },
+    "gemini-2.0-flash": {
+        "daily_limit": 20,
+        "max_rpm": 3,
+        "min_interval": 20.0,
+        "is_lite": False,
+    },
 }
 
 DEFAULT_MODEL_ORDER: List[str] = list(MODEL_SPECS.keys())
@@ -158,6 +176,8 @@ class QuotaManager:
         modified = False
         # Ensure all defined models exist in data and evaluate 24-hour resets
         for model, spec in MODEL_SPECS.items():
+            if model not in data:
+                modified = True
             entry = data.setdefault(model, {
                 "usage_count": 0,
                 "daily_limit": spec["daily_limit"],

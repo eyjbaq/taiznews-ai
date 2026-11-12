@@ -6,6 +6,7 @@ and custom calligraphic 'تعز' emblem matching professional news network stand
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import time
@@ -145,6 +146,48 @@ class NewsCardRenderer:
             lines.append(" ".join(current))
         return lines
 
+    def _try_download_article_image(self, image_url: str, slug: str) -> Optional[Path]:
+        """Download real article image and verify minimum dimensions (600x400) before saving."""
+        clean_url = (image_url or "").strip()
+        if not clean_url or not clean_url.lower().startswith(("http://", "https://")):
+            return None
+
+        try:
+            response = requests.get(
+                clean_url,
+                timeout=10,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; TaizNewsAI/1.0)",
+                    "Accept": "image/*,*/*;q=0.8",
+                },
+            )
+            response.raise_for_status()
+            if not response.content:
+                return None
+
+            with Image.open(io.BytesIO(response.content)) as img:
+                img_width, img_height = img.size
+                if img_width < 600 or img_height < 400:
+                    LOGGER.info(
+                        "Article image too small (%dx%d < 600x400), falling back to AI generation: %s",
+                        img_width,
+                        img_height,
+                        clean_url,
+                    )
+                    return None
+
+                rgb_img = img.convert("RGB")
+                safe_slug = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (slug or "article"))[:32]
+                out_dir = Path(self.output_dir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                target_path = out_dir / f"real_bg_{safe_slug}.jpg"
+                rgb_img.save(target_path, format="JPEG", quality=92)
+                LOGGER.info("Using real article image (%dx%d) for card: %s", img_width, img_height, target_path)
+                return target_path
+        except Exception as exc:
+            LOGGER.info("Could not use article image (%s), falling back to AI generation: %s", clean_url, exc)
+            return None
+
     def render_card(
         self,
         editorial_post: EditorialPost,
@@ -156,7 +199,7 @@ class NewsCardRenderer:
         """Render high-impact breaking news card matching Taiz News visual identity.
 
         Components:
-          1. AI Generated / Photographic Background (1080x1350)
+          1. Real News Image (>=600x400) / AI Generated Background (1080x1350)
           2. Tactical grid overlay & subtle broadcast dark gradients
           3. Top-left channel bug container (Taiz emblem + 'تعز نيوز')
           4. White pill badge on the right ('مصادر محلية:' / 'عاجل:') with red chevrons
@@ -165,13 +208,18 @@ class NewsCardRenderer:
         """
         width, height = self.width, self.height
 
-        # 1. Resolve Background Image
+        # 1. Resolve Background Image (Explicit path -> Real high-res article image -> AI image)
         resolved_bg: Optional[Path] = None
+        slug = (article.id if article else f"card_{int(time.time())}")[:16]
+
         if bg_image_path and Path(bg_image_path).exists():
             resolved_bg = Path(bg_image_path)
-        elif editorial_post.image_prompt_en:
+
+        if resolved_bg is None and article and getattr(article, "image_url", None):
+            resolved_bg = self._try_download_article_image(article.image_url, slug)
+
+        if resolved_bg is None and editorial_post.image_prompt_en:
             try:
-                slug = (article.id if article else f"card_{int(time.time())}")[:16]
                 generated_bg = generate_ai_image(
                     prompt=editorial_post.image_prompt_en,
                     width=width,

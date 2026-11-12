@@ -1,4 +1,4 @@
-"""Command-line entry point for the Phase 1 Taiz news engine."""
+"""Command-line entry point and CentralBrain orchestrator for taiznews-ai."""
 
 from __future__ import annotations
 
@@ -8,161 +8,363 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Ensure project root is in sys.path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from app.ai.editorial import evaluate_and_draft_batch
+from app.ai.models import EditorialPost
+from app.ai.quota_manager import QUOTA_MANAGER
+from app.brain.central_brain import CentralBrain
 from app.collector.base import Article
 from app.collector.gdelt import fetch_gdelt_articles
-from app.collector.rss import load_settings, load_sources, fetch_rss_articles
+from app.collector.rss import fetch_rss_articles, load_settings, load_sources
+from app.collector.scraper import enrich_top_candidates
+from app.design.ai_image import generate_ai_images
+from app.design.map_reel import compose_interactive_news_reel
+from app.design.reel_maker import compose_news_reel
+from app.design.renderer import NewsCardRenderer
+from app.design.tts_generator import generate_news_audio, get_last_used_voice_key
 from app.processing.deduplicate import (
     DEFAULT_PROCESSED_PATH,
-    deduplicate_articles,
+    cluster_articles,
+    filter_against_published_history,
     load_processed_urls,
     save_processed_urls,
 )
+from app.processing.history import (
+    get_recent_published_summary,
+    load_published_history,
+    record_published_post,
+)
 from app.processing.normalize import normalize_articles
-from app.processing.relevance import filter_relevant
-from app.processing.history import record_published_post, get_recent_published_summary
-from app.ai.editorial import process_article
-from app.ai.models import EditorialPost
-from app.ai.quota_manager import QUOTA_MANAGER
-from app.design.renderer import NewsCardRenderer
-from app.design.ai_image import generate_ai_image, generate_ai_images
-from app.design.tts_generator import generate_news_audio
-from app.design.reel_maker import compose_news_reel
-from app.publisher.facebook import FacebookPublisher, format_facebook_caption, format_facebook_reel_caption
-
+from app.processing.relevance import (
+    filter_fresh_articles,
+    filter_relevant,
+    filter_yemen_trend,
+    score_article_smart,
+)
+from app.publisher.facebook import (
+    FacebookPublisher,
+    format_facebook_caption,
+    format_facebook_reel_caption,
+    format_map_reel_caption,
+    format_satirical_caption,
+)
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config" / "sources.yaml"
 LOGGER = logging.getLogger(__name__)
+QUIET_HOUR_LOCAL_SCORE_THRESHOLD = 105.0
+SECOND_POST_DELAY_SECONDS = 35 * 60
+FATAL_FB_ERROR_CODES = (190, 102, 10)
 
-
-def score_article(article: Article) -> float:
-    """Score an article locally based on breaking urgency, Taiz relevance, and freshness."""
-    score = 0.0
-    title_lower = article.title.lower()
-    desc_lower = (article.description or "").lower()
-
-    # Breaking and viral news keywords
-    urgent_keywords = [
-        "عاجل", "مصرع", "سيطرة", "اشتباكات", "مواجهات", "غارات", "طيران",
-        "معارك", "هجوم", "كارثة", "نداء إنساني", "تسلل", "استهداف", "شهداء",
-        "انفجار", "حادث", "طريق", "سيول", "انهيار", "جريمة", "ضبط", "إحباط",
-        "توتر", "احتجاجات", "فتح طريق", "أزمة"
-    ]
-    for kw in urgent_keywords:
-        if kw in title_lower:
-            score += 35.0
-        elif kw in desc_lower:
-            score += 15.0
-
-    # High visual storytelling potential keywords (allows rich photojournalism)
-    visual_keywords = [
-        "غارات", "حريق", "سيول", "اشتباكات", "طريق", "شاحنات", "موكب",
-        "انفجار", "مسيرة", "سد", "مدرعات", "حصار", "ميناء", "المخا", "الحوبان", "جبل صبر"
-    ]
-    for vkw in visual_keywords:
-        if vkw in title_lower or vkw in desc_lower:
-            score += 20.0
-            break
-
-    # Taiz prominence
-    if "تعز" in title_lower:
-        score += 40.0
-    elif "تعز" in desc_lower:
-        score += 20.0
-
-    # Freshness / Recency weight (newer = higher score)
-    now = datetime.now(timezone.utc)
-    pub = article.published_at
-    if pub.tzinfo is None:
-        pub = pub.replace(tzinfo=timezone.utc)
-    age_hours = max(0.1, (now - pub).total_seconds() / 3600.0)
-    score += max(0.0, 50.0 - (age_hours * 2.0))
-
-    return score
-
-
-def _format_date(article: Article) -> str:
-    date = article.published_at
-    if date.tzinfo is None:
-        date = date.replace(tzinfo=timezone.utc)
-    return date.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+# Backwards compatibility alias
+score_article = score_article_smart
 
 
 def _create_reel_for_article(
     post: EditorialPost,
     article: Article,
+    preferred_voice: Optional[str] = None,
 ) -> Optional[str]:
-    """Create a high-impact news reel using AI-generated storyboard images and Ken Burns motion."""
-    # 1. Prepare narration text: vocalized_content ensures 100% accurate Arabic diacritics and pronunciation
+    """Create a standard vertical news reel using TTS voice routing and AI storyboard scenes."""
     narration_text = (
         getattr(post, "vocalized_content", "")
         or getattr(post, "clean_content", "")
         or getattr(post, "body", "")
     ).strip()
-
     if not narration_text:
-        narration_text = f"{post.headline}. {post.body}"
+        narration_text = f"{post.headline}. {post.body}".strip()
 
     audio_path, word_timestamps = generate_news_audio(
         text=narration_text,
         slug=f"reel_tts_{(article.id if article else 'taiz')[:8]}",
         vocalized_fallback_text=getattr(post, "vocalized_content", ""),
+        preferred_voice_key=preferred_voice,
     )
     if not audio_path:
-        LOGGER.error("Failed to generate TTS audio for reel: %s", article.title)
+        LOGGER.error("Failed to generate TTS audio for standard reel: %s", article.title)
         return None
 
-    # 2. AI Image Storyboard Mode (Cloudflare Workers AI with Pollinations fallback)
-    print(f"\n[🎨 نمط الصور: توليد مشاهد بصرية عبر Cloudflare Workers AI وبديل Pollinations]...")
-    prompts = post.image_prompts_en if hasattr(post, "image_prompts_en") and post.image_prompts_en else []
+    prompts = list(getattr(post, "image_prompts_en", []) or [])
     if not prompts and post.image_prompt_en:
         prompts = [post.image_prompt_en]
     if not prompts:
         prompts = [
-            f"Dramatic wide shot of heavy smoke rising from military clashes near Yemeni city Taiz, armored vehicles on dusty road, AP photojournalism, 35mm lens, natural harsh daylight",
-            f"Military technical pickup truck with mounted heavy machine gun racing on mountain road in Taiz Yemen, soldiers aboard, dust cloud, Reuters war photography",
-            f"Ground level close-up of battle aftermath on a Yemeni street in Taiz, shell casings scattered, damaged concrete wall with bullet holes, gritty photojournalism",
-            f"Yemeni civilians fleeing with belongings through a damaged narrow street in Taiz, ambulance in background, chaotic atmosphere, documentary photography",
-            f"Aftermath scene of military checkpoint in Taiz Yemen, armored vehicle parked near damaged building, soldiers standing guard, cautious calm, no sunset",
+            "Editorial breaking news street scene in Taiz Yemen, AP photojournalism, natural daylight",
+            "Yemeni city overview looking toward Mount Sabir in Taiz, documentary wide shot",
+            "Close-up of crowded market street in Taiz Yemen, realistic photojournalism",
+            "Local traffic and urban life in Yemeni city district, atmospheric light",
         ]
 
-    print(f"📸 أوصاف المشاهد المصورة المولدة ({len(prompts)} مشاهد):")
-    for pi, p_txt in enumerate(prompts, start=1):
-        print(f"   [{pi}] {p_txt[:95]}...")
-
+    print(f"\n[🎨 توليد {len(prompts)} مشاهد بصرية للريلز]...")
     scene_images = generate_ai_images(
         prompts=prompts,
         slug_prefix=f"reel_scene_{(article.id if article else 'taiz')[:8]}",
     )
-    if scene_images and audio_path:
-        reel_path = compose_news_reel(
-            image_paths=scene_images,
-            audio_path=audio_path,
-            word_timestamps=word_timestamps,
-            headline=post.headline,
-            category=post.category,
-            source_attribution="",
-            slug=f"reel_{(article.id if article else 'taiz')[:8]}",
-        )
-        if reel_path:
-            print(f"\n🎉 🎬 مقطع الريلز السينمائي النهائي المصمم بنجاح:\n{reel_path}")
-            return reel_path
+    if not scene_images:
+        LOGGER.error("Failed to generate storyboard images for reel: %s", article.title)
+        return None
 
-    return None
+    reel_path = compose_news_reel(
+        image_paths=scene_images,
+        audio_path=audio_path,
+        word_timestamps=word_timestamps,
+        headline=post.headline,
+        category=post.category,
+        source_attribution="",
+        slug=f"reel_{(article.id if article else 'taiz')[:8]}",
+    )
+    if reel_path:
+        print(f"🎉 تم تصميم مقطع الريلز القياسي بنجاح: {reel_path}")
+    return reel_path
+
+
+def _print_brain_plan_summary(
+    run_plan: Dict[str, Any],
+    sync_stats: Dict[str, Any],
+) -> None:
+    """Print structured telemetry for the CentralBrain hourly strategy."""
+    today = run_plan.get("today_counts", {})
+    caps = run_plan.get("daily_caps", {})
+    rem = run_plan.get("remaining_quotas", {})
+    formats = run_plan.get("allowed_formats") or []
+
+    if run_plan.get("is_quiet_hour"):
+        window_state = "ساعات الفجر الميتة (عاجل فقط)"
+    elif run_plan.get("is_peak_hour"):
+        window_state = "ذروة التفاعل والمشاهدة"
+    else:
+        window_state = "ساعات النهار العادية"
+
+    print("\n" + "=" * 68)
+    print("🧠 === taiznews-ai | خطة العقل المركزي لهذه الساعة ===")
+    print("=" * 68)
+    print(f"🕒 التوقيت المحلي في اليمن: {run_plan.get('current_time_ye')} ({window_state})")
+    print(
+        f"📡 مزامنة تفاعلات فيسبوك: تم تحديث {sync_stats.get('synced_count', 0)} منشور "
+        f"(سبب التخطي إن وُجد: {sync_stats.get('skipped_reason') or 'لا يوجد'})"
+    )
+    print(f"⚖️ القرار المبدئي للعقل المركزي: {run_plan.get('decision')}")
+    print(
+        f"📊 الحصص المتبقية اليوم: ريلز {rem.get('reels_remaining', 0)}/{caps.get('max_daily_reels', 4)} | "
+        f"بطاقات {rem.get('photos_remaining', 0)}/{caps.get('max_daily_photos', 10)} | "
+        f"ساخر {rem.get('text_satire_remaining', 0)}/{caps.get('max_daily_text_satire', 8)} | "
+        f"ترند اليمن {rem.get('yemen_trends_remaining', 0)}/{caps.get('max_daily_yemen_trends', 2)}"
+    )
+    print(f"📈 إجمالي المنشور اليوم: {today.get('total_posts', 0)}")
+    print(f"🎬 الصيغ المسموحة بالترتيب: {formats or 'لا توجد (تخطي)'}")
+    print(f"🎙️ الصوت المقترح للريلز: {run_plan.get('preferred_voice', 'maryam')}")
+    print("=" * 68)
+
+
+def _dry_run_fallback_result(
+    dry_run: bool,
+    fmt: str,
+    preview_label: str,
+    caption: str,
+    asset_path: Optional[str] = None,
+    sched_ts: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a clean dry-run mock payload if FB credentials are absent locally."""
+    if not dry_run:
+        return None
+    sched_info = f" [مجدول: {sched_ts}]" if sched_ts else " [فوري]"
+    print(f"\n🧪 [DRY RUN - {preview_label}]{sched_info}")
+    if asset_path:
+        print(f"📎 الملف المنتج: {asset_path}")
+    print(f"📝 النص/الوصف:\n{caption}")
+    return {"id": f"dry_run_{fmt}_{int(time.time())}", "post_id": f"dry_run_{fmt}_{int(time.time())}", "mode": fmt}
+
+
+def _publish_photo_with_fallback(
+    post: EditorialPost,
+    article: Article,
+    card_renderer: NewsCardRenderer,
+    facebook_publisher: FacebookPublisher,
+    dry_run: bool,
+    sched_ts: Optional[int],
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Publish as hybrid photo card, falling back to plain text satire if rendering fails."""
+    caption = format_facebook_caption(post, article)
+    image_path: Optional[str] = None
+    try:
+        image_path = card_renderer.render_card(post, article=article)
+        if image_path:
+            print(f"🖼️ بطاقة الخبر المصممة: {image_path}")
+    except Exception as exc:
+        LOGGER.error("Card rendering failed for %s: %s", article.title, exc)
+
+    if image_path:
+        res = facebook_publisher.publish_photo(image_path, caption, scheduled_publish_time=sched_ts)
+        if res:
+            return res, "photo_card"
+        if dry_run:
+            return _dry_run_fallback_result(dry_run, "photo_card", "بطاقة إخبارية", caption, asset_path=image_path, sched_ts=sched_ts), "photo_card"
+        return None, "photo_card"
+
+    print("🔄 تعذر تصميم بطاقة الخبر، التحول التلقائي إلى منشور نصي...")
+    sat_caption = format_satirical_caption(post)
+    res = facebook_publisher.publish_text(sat_caption, scheduled_publish_time=sched_ts)
+    if not res and dry_run:
+        res = _dry_run_fallback_result(dry_run, "text_satire", "منشور نصي بديل", sat_caption, sched_ts=sched_ts)
+    return res, "text_satire"
+
+
+def _dispatch_selected_post(
+    post: EditorialPost,
+    article: Article,
+    preferred_voice: Optional[str],
+    card_renderer: NewsCardRenderer,
+    facebook_publisher: FacebookPublisher,
+    dry_run: bool,
+    sched_ts: Optional[int],
+) -> Tuple[Optional[Dict[str, Any]], str, str]:
+    """Produce media (if needed) and publish according to post.chosen_format with safe fallbacks."""
+    chosen = (post.chosen_format or "photo_card").strip()
+    print(f"\n🚀 [التنفيذ والتوجيه] الصيغة المختارة: [{chosen}] | النطاق: [{post.scope}]")
+    print(f"📰 العنوان: {post.headline}")
+
+    if chosen == "text_satire":
+        caption = format_satirical_caption(post)
+        res = facebook_publisher.publish_text(caption, scheduled_publish_time=sched_ts)
+        if not res and dry_run:
+            res = _dry_run_fallback_result(dry_run, "text_satire", "منشور ساخر", caption, sched_ts=sched_ts)
+        return res, "text_satire", ""
+
+    if chosen == "photo_card":
+        res, final_fmt = _publish_photo_with_fallback(
+            post, article, card_renderer, facebook_publisher, dry_run, sched_ts
+        )
+        return res, final_fmt, ""
+
+    if chosen == "standard_reel":
+        reel_path: Optional[str] = None
+        try:
+            reel_path = _create_reel_for_article(post, article, preferred_voice=preferred_voice)
+        except Exception as exc:
+            LOGGER.error("Standard reel synthesis failed for '%s': %s", article.title, exc)
+            print(f"⚠️ تعذر إنشاء الريلز القياسي: {exc}")
+
+        if reel_path and Path(reel_path).exists():
+            used_voice = get_last_used_voice_key()
+            reel_caption = format_facebook_reel_caption(post, article)
+            res = facebook_publisher.publish_reel(
+                video_path=reel_path,
+                caption=reel_caption,
+                title=post.headline,
+                scheduled_publish_time=sched_ts,
+            )
+            if not res and dry_run:
+                res = _dry_run_fallback_result(
+                    dry_run, "standard_reel", "ريلز قياسي", reel_caption, asset_path=str(reel_path), sched_ts=sched_ts
+                )
+            return res, "standard_reel", used_voice
+
+        print("🔄 فشل إنشاء فيديو الريلز القياسي؛ التحول التلقائي لبطاقة مصورة أو نص...")
+        res, final_fmt = _publish_photo_with_fallback(
+            post, article, card_renderer, facebook_publisher, dry_run, sched_ts
+        )
+        return res, final_fmt, ""
+
+    if chosen == "map_reel":
+        map_reel_path: Optional[Path] = None
+        try:
+            map_reel_path = compose_interactive_news_reel(
+                district_name=post.district_name or "مدينة تعز",
+                label=post.map_label or post.district_name or "تعز",
+                hook_text=post.hook_text or post.headline,
+                location_chip_text=post.location_chip_text or post.district_name or "تعز",
+                narration_vocalized=post.vocalized_content or post.clean_content,
+                narration_clean=post.clean_content or post.body,
+                slug=f"map_reel_{(article.id if article else 'taiz')[:8]}",
+                map_style="satellite",
+                mode="full_map",
+                military=bool(post.is_military),
+                preferred_voice_key=preferred_voice,
+            )
+        except Exception as exc:
+            LOGGER.error("Map reel synthesis failed for '%s': %s", article.title, exc)
+            print(f"⚠️ تعذر إنشاء ريلز الخريطة التفاعلية: {exc}")
+
+        if map_reel_path and Path(map_reel_path).exists():
+            used_voice = get_last_used_voice_key()
+            short_title, map_caption = format_map_reel_caption(post, article)
+            res = facebook_publisher.publish_reel(
+                video_path=str(map_reel_path),
+                caption=map_caption,
+                title=short_title,
+                scheduled_publish_time=sched_ts,
+            )
+            if not res and dry_run:
+                res = _dry_run_fallback_result(
+                    dry_run, "map_reel", "ريلز خريطة تفاعلية", map_caption, asset_path=str(map_reel_path), sched_ts=sched_ts
+                )
+            return res, "map_reel", used_voice
+
+        print("🔄 تعذر إنشاء ريلز الخريطة التفاعلية؛ التحول التلقائي لبطاقة مصورة أو نص...")
+        res, final_fmt = _publish_photo_with_fallback(
+            post, article, card_renderer, facebook_publisher, dry_run, sched_ts
+        )
+        return res, final_fmt, ""
+
+    # Defensive fallback for any unexpected format string
+    res, final_fmt = _publish_photo_with_fallback(
+        post, article, card_renderer, facebook_publisher, dry_run, sched_ts
+    )
+    return res, final_fmt, ""
+
+
+def _resolve_max_selections(run_plan: Dict[str, Any], max_posts: Optional[int]) -> int:
+    """Allow 2 posts only during peak hours when daily output is below half capacity, else 1."""
+    today_counts = run_plan.get("today_counts", {})
+    caps = run_plan.get("daily_caps", {})
+    total_cap = sum(
+        int(caps.get(k, 0))
+        for k in ("max_daily_reels", "max_daily_photos", "max_daily_text_satire")
+    )
+    today_total = int(today_counts.get("total_posts", 0))
+
+    if run_plan.get("is_peak_hour") and today_total < (total_cap / 2.0):
+        target = 2
+    else:
+        target = 1
+
+    if max_posts is not None:
+        target = max(0, min(target, int(max_posts)))
+    return target
 
 
 def run_pipeline(
     dry_run: bool = False,
     max_posts: Optional[int] = None,
+    enable_map_reel: bool = True,
+    map_schedule_minutes: int = 60,
 ) -> List[Article]:
+    """Execute the autonomous CentralBrain hourly pipeline."""
+    # Step 1: Initialize FacebookPublisher + CentralBrain & Sync Self-Learning
+    facebook_publisher = FacebookPublisher(dry_run=dry_run)
+    brain = CentralBrain()
+    sync_stats = brain.sync_and_learn_from_facebook(facebook_publisher, dry_run=dry_run)
+    run_plan = brain.plan_hourly_run()
+
+    if not enable_map_reel:
+        run_plan["allowed_formats"] = [f for f in run_plan.get("allowed_formats", []) if f != "map_reel"]
+
+    _print_brain_plan_summary(run_plan, sync_stats)
+
+    if dry_run:
+        print("⚠️ وضع الفحص المحلي (DRY RUN): مفعل — لن يتم النشر على فيسبوك ولن تُحفظ الروابط في السجل.")
+
+    if run_plan.get("decision") == "SKIP":
+        print("⏭️ قرار العقل المركزي لهذه الساعة: SKIP (اكتمال الحصص اليومية أو عدم وجود صيغ متاحة). إنهاء الجولة.")
+        return []
+
+    # Step 2: Concurrent Collection + Dual-Track Filtering (Taiz & Yemen Trend)
     settings = load_settings(CONFIG_PATH)
     timeout = int(settings.get("request_timeout_seconds", 20))
     max_entries = int(settings.get("max_entries_per_source", 30))
@@ -172,238 +374,177 @@ def run_pipeline(
         str(source["name"]): float(source.get("reliability", 0))
         for source in load_sources(CONFIG_PATH)
     }
-    source_reliability["GDELT"] = 80
+    source_reliability["GDELT"] = 80.0
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         rss_future = executor.submit(fetch_rss_articles, CONFIG_PATH, timeout, max_entries)
-        gdelt_future = executor.submit(fetch_gdelt_articles, '(تعز OR الحوبان OR حيفان OR مقبنة OR المخا OR Taiz)', 35, timeout)
+        gdelt_future = executor.submit(fetch_gdelt_articles, "(تعز OR الحوبان OR حيفان OR مقبنة OR المخا OR Taiz)", 35, timeout)
         rss_articles = rss_future.result()
         gdelt_articles = gdelt_future.result()
 
     fetched = rss_articles + gdelt_articles
     normalized = normalize_articles(fetched)
-    def article_reliability(article: Article) -> float:
+
+    def _article_reliability(article: Article) -> float:
         if article.source.startswith("GDELT"):
             return source_reliability["GDELT"]
-        return source_reliability.get(article.source, 0)
+        return source_reliability.get(article.source, 0.0)
 
-    reliable = [article for article in normalized if article_reliability(article) >= minimum_reliability]
-
+    reliable = [a for a in normalized if _article_reliability(a) >= minimum_reliability]
     processed_urls = load_processed_urls(DEFAULT_PROCESSED_PATH)
-    unseen = [article for article in reliable if article.url not in processed_urls]
-    relevant = filter_relevant(unseen)
-    qualified = deduplicate_articles(relevant)
+    unseen = [a for a in reliable if a.url not in processed_urls]
+    fresh_unseen = filter_fresh_articles(unseen, max_age_hours=24.0)
 
-    # Smart Ranking: Sort qualified articles so the most urgent and fresh Taiz news is first
-    qualified.sort(key=score_article, reverse=True)
+    taiz_raw = filter_relevant(fresh_unseen)
+    yemen_raw = filter_yemen_trend(fresh_unseen) if run_plan.get("allow_yemen_trend", False) else []
 
-    print("\n=== taiznews-ai | News Reels Engine ===")
-    if dry_run:
-        print("⚠️ وضع الفحص المحلي (DRY RUN): مفعل — لن يتم النشر على فيسبوك وسيتم حفظ كل المخرجات محلياً.")
-    print(f"إجمالي الأخبار المجلوبة: {len(fetched)}")
+    history_entries = load_published_history()
+    taiz_fresh = filter_against_published_history(taiz_raw, history_entries)
+    yemen_fresh = filter_against_published_history(yemen_raw, history_entries) if yemen_raw else []
 
-    if fetched:
-        print("\n--- عينة من العناوين المجلوبة (أول 5 عناوين) ---")
-        for index, article in enumerate(fetched[:5], start=1):
-            print(f"[{index}] ({article.source}) {article.title}")
+    taiz_qualified = cluster_articles(taiz_fresh)
+    yemen_qualified = cluster_articles(yemen_fresh) if yemen_fresh else []
 
-    print(f"\nبعد فلتر الموثوقية والروابط السابقة: {len(unseen)}")
-    print(f"الأخبار الخاصة بتعز: {len(relevant)}")
-    print(f"الأخبار المؤهلة بعد إزالة التكرار: {len(qualified)}")
+    taiz_qualified.sort(key=score_article_smart, reverse=True)
+    yemen_qualified.sort(key=score_article_smart, reverse=True)
 
-    editorial_posts = []
-    if qualified:
-        print("\n--- الأخبار المرشحة مرتبة حسب الأهمية وحداثة الحدث ---")
-        for index, article in enumerate(qualified[:5], start=1):
-            print(f"{index}. [نقاط الأهمية: {score_article(article):.1f}] [{article.source}] {article.title}")
-            print(f"   الرابط: {article.url}")
+    print(
+        f"\n📥 الجمع والفلترة: إجمالي={len(fetched)} | موثوق وغير معالج={len(unseen)} | "
+        f"حديث (<24 ساعة)={len(fresh_unseen)} | "
+        f"مسار تعز (بعد التجميع والتاريخ)={len(taiz_qualified)} | "
+        f"ترند اليمن={len(yemen_qualified)}"
+    )
 
-        print("\n" + "=" * 65)
-        print("=== taiznews-ai | Phase 2, 3 & 4: Editorial, Design & Publishing ===")
-        print("=" * 65)
-        print(f"📊 حالة النماذج المتاحة: {QUOTA_MANAGER.get_status_summary()}")
+    if taiz_qualified:
+        print("\n--- أفضل مرشحي مسار تعز ---")
+        for i, art in enumerate(taiz_qualified[:5], start=1):
+            print(f"  {i}. [{score_article_smart(art):.1f}] (مصادر:{art.corroboration_count}) [{art.source}] {art.title}")
+    if yemen_qualified:
+        print("\n--- أفضل مرشحي ترند اليمن ---")
+        for i, art in enumerate(yemen_qualified[:3], start=1):
+            print(f"  {i}. [{score_article_smart(art):.1f}] (مصادر:{art.corroboration_count}) [{art.source}] {art.title}")
 
-        card_renderer = NewsCardRenderer()
-        facebook_publisher = FacebookPublisher()
-        # Target posts per run (defaults to 2: 1 photo card + 1 news reel)
-        max_publish_count = max_posts if max_posts is not None else int(os.getenv("MAX_POSTS_PER_RUN", "2"))
-        recent_posts_context = get_recent_published_summary(limit=5)
-        published_posts = []
-        editorial_posts = []
+    # Step 3: Local Pre-Gemini Token Conservation Gatekeeper
+    if not taiz_qualified and not yemen_qualified:
+        print("\n🛑 لا توجد أخبار جديدة مؤهلة في تعز أو ترند اليمن بعد الفلترة المحلية — الخروج دون استهلاك Gemini.")
+        return []
 
-        # Smart Token-Saving loop: Only evaluate candidates until target posts are published
-        for index, article in enumerate(qualified, start=1):
-            if len(published_posts) >= max_publish_count:
-                print(f"\n🎯 اكتمل نشر المنشورات المطلوبة لهذه الجولة ({len(published_posts)}/{max_publish_count}). التوقف لترشيد التوكن والحصص.")
-                break
+    if run_plan.get("is_quiet_hour") or run_plan.get("decision") == "URGENT_ONLY":
+        top_taiz_score = score_article_smart(taiz_qualified[0]) if taiz_qualified else 0.0
+        if top_taiz_score < QUIET_HOUR_LOCAL_SCORE_THRESHOLD:
+            print(
+                f"\n🌙 [بوابة ترشيد الفجر] أعلى خبر محلي سجل {top_taiz_score:.1f} نقطة "
+                f"(أقل من الحد الطارئ {QUIET_HOUR_LOCAL_SCORE_THRESHOLD:.1f}). التوقف لتوفير التوكنات للنهار."
+            )
+            return []
+        print(f"\n🚨 [اختراق طارئ لساعات الفجر] خبر تعزي فائق الأهمية ({top_taiz_score:.1f} نقطة) — متابعة المعالجة!")
 
-            print(f"\n[جاري تقييم الخبر المرشح #{index}/{len(qualified)} عبر Gemini]:")
-            print(f"📰 {article.title}")
+    # Step 4: Enrich Top Candidates & Single-Call Batch Triage
+    top_taiz = enrich_top_candidates(taiz_qualified[:5], max_candidates=5) if taiz_qualified else []
+    top_yemen = (
+        enrich_top_candidates(yemen_qualified[:2], max_candidates=2)
+        if (yemen_qualified and run_plan.get("allow_yemen_trend", False))
+        else []
+    )
+    batch_articles: List[Article] = list(top_taiz) + list(top_yemen)
 
-            post = process_article(article, recent_posts_context=recent_posts_context)
-            if not post:
-                print(f"⚠️ تعذر التحرير الذكي للخبر: {article.title}")
-                continue
+    max_selections = _resolve_max_selections(run_plan, max_posts)
+    recent_posts_context = get_recent_published_summary(limit=5)
+    print(f"\n📊 حالة نماذج Gemini المتاحة: {QUOTA_MANAGER.get_status_summary()}")
+    print(f"🎯 الحد الأقصى للاختيار في هذه الجولة: {max_selections}")
 
-            status_str = "✅ معتمد للنشر" if post.should_publish else "❌ مرفوض من النشر"
-            relevance_str = "نعم" if post.is_relevant_to_taiz else "لا"
+    batch_resp = evaluate_and_draft_batch(
+        taiz_candidates=top_taiz,
+        yemen_candidates=top_yemen,
+        run_plan=run_plan,
+        recent_posts_context=recent_posts_context,
+        max_selections=max_selections,
+    )
 
-            print("\n" + "-" * 55)
-            print(f"📌 تقييم المنشور التحريري:")
-            print(f"• قرار النشر التحريري: {status_str}")
-            print(f"• صلة مباشرة بمحافظة تعز: {relevance_str}")
-            print(f"• التصنيف: {post.category}")
-            print(f"• درجة الأهمية: {post.importance_score}/100")
-            if not post.should_publish and post.rejection_reason:
-                print(f"• سبب الاستبعاد: {post.rejection_reason}")
+    if batch_resp is None:
+        print("\n⚠️ تعذر إتمام استدعاء التحرير الدفعي عبر Gemini.")
+        return taiz_qualified + yemen_qualified
 
-            if not post.should_publish:
-                # Mark as processed so we don't re-evaluate a rejected news item
+    if batch_resp.decision != "PUBLISH" or not batch_resp.selected_posts:
+        print(f"\n⏭️ [قرار التحرير الدفعي: SKIP] السبب: {batch_resp.skip_reason or 'لا يوجد خبر يستحق النشر'}")
+        if not dry_run and batch_articles:
+            save_processed_urls([a.url for a in batch_articles], DEFAULT_PROCESSED_PATH)
+            print(f"💾 تم حفظ {len(batch_articles)} روابط مستبعدة في سجل المعالجة لمنع إعادتها في الساعة القادمة.")
+        return taiz_qualified + yemen_qualified
+
+    # Resolve selected (article, post) pairs preserving candidate index order
+    selected_pairs: List[Tuple[Article, EditorialPost]] = []
+    for post in batch_resp.selected_posts:
+        idx = post.candidate_index - 1
+        if 0 <= idx < len(batch_articles):
+            selected_pairs.append((batch_articles[idx], post))
+
+    # Step 5: Execute & Route by Format
+    card_renderer = NewsCardRenderer()
+    preferred_voice = run_plan.get("preferred_voice")
+    published_urls: Set[str] = set()
+    published_summary: List[Tuple[str, str, str]] = []
+    fatal_fb_auth_error = False
+
+    for seq_idx, (article, post) in enumerate(selected_pairs):
+        sched_ts: Optional[int] = (
+            int(time.time()) + SECOND_POST_DELAY_SECONDS
+            if len(selected_pairs) >= 2 and seq_idx > 0
+            else None
+        )
+
+        pub_result, actual_fmt, used_voice_key = _dispatch_selected_post(
+            post=post,
+            article=article,
+            preferred_voice=preferred_voice,
+            card_renderer=card_renderer,
+            facebook_publisher=facebook_publisher,
+            dry_run=dry_run,
+            sched_ts=sched_ts,
+        )
+
+        if pub_result:
+            published_urls.add(article.url)
+            published_summary.append((actual_fmt, post.scope, used_voice_key))
+            if not dry_run:
+                record_published_post(
+                    post,
+                    article,
+                    pub_result,
+                    post_type=actual_fmt,
+                    voice_id=used_voice_key,
+                    scope=post.scope,
+                )
                 save_processed_urls([article.url], DEFAULT_PROCESSED_PATH)
-                print(f"⏩ الانتقال للخبر المرشح التالي...")
-                print("-" * 55)
-                continue
+            print(f"✅ تم اعتماد وتسجيل المنشور #{seq_idx + 1} بنجاح ({actual_fmt} | النطاق: {post.scope}).")
+        elif facebook_publisher.last_error_code in FATAL_FB_ERROR_CODES:
+            print("\n" + "=" * 65)
+            print(f"🛑 إيقاف فوري للدورة: خطأ صلاحيات فيسبوك (Error {facebook_publisher.last_error_code})!")
+            print("=" * 65)
+            fatal_fb_auth_error = True
+            break
 
-            editorial_posts.append((article, post))
+    # Save evaluated-but-unpicked candidate URLs so next hour doesn't waste tokens on them
+    if not dry_run and not fatal_fb_auth_error:
+        remaining_batch_urls = [a.url for a in batch_articles if a.url not in published_urls]
+        if remaining_batch_urls:
+            save_processed_urls(remaining_batch_urls, DEFAULT_PROCESSED_PATH)
 
-            print(f"\n📰 العنوان المصاغ:\n{post.headline}")
-            display_content = post.clean_content or post.body
-            print(f"\n📝 النص الجاهز للمنشور:\n{display_content}")
-            print(f"\n🏷️ الوسوم:\n{' '.join(post.hashtags)}")
+    print("\n" + "=" * 68)
+    print(f"🏁 انتهاء جولة الساعة بنجاح — تم إنتاج/نشر {len(published_summary)} منشور:")
+    for fmt, scope, voice in published_summary:
+        voice_tag = f" | صوت: {voice}" if voice else ""
+        print(f"   • الصيغة: {fmt} | النطاق: {scope}{voice_tag}")
+    print(f"📊 استهلاك نماذج Gemini اليوم: {QUOTA_MANAGER.get_status_summary()}")
+    print("=" * 68)
 
-            caption = format_facebook_caption(post, article)
-
-            # Check if this is Post #1 (Photo Card) or Post #2 (News Reel)
-            if len(published_posts) == 0:
-                # ─── المنشور الأول: نشر فوري لبطاقة الخبر والنص ───
-                print(f"\n[🚀 المنشور الأول: نشر فوري لبطاقة الخبر والنص على فيسبوك]...")
-                image_path = None
-                try:
-                    image_path = card_renderer.render_card(post, article=article)
-                    if image_path:
-                        print(f"🖼️ بطاقة الخبر المصممة:\n{image_path}")
-                except Exception as img_err:
-                    LOGGER.error("Failed rendering card for %s: %s", article.title, img_err)
-
-                if not image_path:
-                    print("⚠️ تعذر تصميم بطاقة الخبر، تخطي هذا المنشور...")
-                    continue
-
-                pub_result = None
-                if dry_run:
-                    print("🧪 [DRY RUN] تم تجاوز النشر على فيسبوك بنجاح.")
-                    pub_result = {"id": f"dry_run_{int(time.time())}", "mode": "photo"}
-                else:
-                    pub_result = facebook_publisher.publish_photo(
-                        image_path,
-                        caption,
-                        scheduled_publish_time=None,  # نشر فوري 100% بدون أي جدولة
-                    )
-
-                if pub_result:
-                    record_published_post(post, article, pub_result)
-                    save_processed_urls([article.url], DEFAULT_PROCESSED_PATH)
-                    published_posts.append((article, post, pub_result, "photo"))
-                    recent_posts_context = get_recent_published_summary(limit=5)
-                    print(f"🎉 تم تسجيل المنشور الأول (البطاقة والنص) بنجاح!")
-                else:
-                    if facebook_publisher.last_error_code in (190, 102, 10):
-                        print("\n" + "=" * 65)
-                        print(f"🛑 إيقاف فوري للدورة: تعذر النشر بسبب خطأ تصريح/صلاحية فيسبوك (Error {facebook_publisher.last_error_code})!")
-                        print("=" * 65)
-                        break
-
-            else:
-                # ─── المنشور الثاني: نشر فوري لمقطع ريلز سينمائي ───
-                print(f"\n[🎬 المنشور الثاني: إنشاء ونشر مقطع ريلز سينمائي فورياً]...")
-                reel_path = None
-                try:
-                    reel_path = _create_reel_for_article(post, article)
-                except Exception as reel_err:
-                    LOGGER.error("Failed creating news reel: %s", reel_err)
-                    print(f"⚠️ تعذر إنشاء مقطع الريلز: {reel_err}")
-
-                pub_result = None
-                if dry_run:
-                    print("🧪 [DRY RUN] تم تجاوز النشر على فيسبوك بنجاح.")
-                    pub_result = {"id": f"dry_run_{int(time.time())}", "mode": "reel"}
-                elif reel_path:
-                    reel_caption = format_facebook_reel_caption(post, article)
-                    pub_result = facebook_publisher.publish_reel(
-                        video_path=reel_path,
-                        caption=reel_caption,
-                        title=post.headline,
-                    )
-                else:
-                    # Fallback to card photo if reel creation failed
-                    print("🔄 استخدام بطاقة الخبر البديلة للنشر الفوري بدلاً من الريلز المتعثر...")
-                    image_path = card_renderer.render_card(post, article=article)
-                    if image_path:
-                        pub_result = facebook_publisher.publish_photo(
-                            image_path,
-                            caption,
-                            scheduled_publish_time=None,
-                        )
-
-                if pub_result:
-                    record_published_post(post, article, pub_result)
-                    save_processed_urls([article.url], DEFAULT_PROCESSED_PATH)
-                    published_posts.append((article, post, pub_result, "reel" if reel_path else "photo"))
-                    recent_posts_context = get_recent_published_summary(limit=5)
-                    print(f"🎉 تم تسجيل المنشور الثاني بنجاح!")
-                else:
-                    if facebook_publisher.last_error_code in (190, 102, 10):
-                        print("\n" + "=" * 65)
-                        print(f"🛑 إيقاف فوري للدورة: تعذر النشر بسبب خطأ تصريح/صلاحية فيسبوك (Error {facebook_publisher.last_error_code})!")
-                        print("=" * 65)
-                        break
-
-            print("-" * 55)
-            if len(published_posts) >= max_publish_count:
-                print(f"🎯 اكتمل نشر المنشورات المطلوبة ({len(published_posts)}/{max_publish_count}). إنهاء الدورة بنجاح.")
-                break
-
-        # If only 1 post was published and we have an approved story, also create its reel so we always produce 1 Photo + 1 Reel
-        if len(published_posts) == 1 and len(editorial_posts) > 0:
-            article, post = editorial_posts[0]
-            print("\n" + "=" * 55)
-            print(f"🎬 [توليد ريلز إضافي] لم يتوفر خبر ثانٍ مؤهل، جاري تحويل الخبر الأول إلى مقطع ريلز فورياً...")
-            reel_caption = format_facebook_reel_caption(post, article)
-            reel_path = None
-            try:
-                reel_path = _create_reel_for_article(post, article)
-                pub_result = None
-                if dry_run:
-                    print("🧪 [DRY RUN] تم تجاوز النشر على فيسبوك بنجاح.")
-                    pub_result = {"id": f"dry_run_{int(time.time())}", "mode": "reel"}
-                elif reel_path:
-                    pub_result = facebook_publisher.publish_reel(
-                        video_path=reel_path,
-                        caption=reel_caption,
-                        title=post.headline,
-                    )
-                if pub_result:
-                    published_posts.append((article, post, pub_result, "reel"))
-                    print("🎉 تم تسجيل مقطع ريلز الخبر الأول بنجاح!")
-            except Exception as e_reel:
-                LOGGER.warning("Extra reel creation failed: %s", e_reel)
-
-        approved_count = len(editorial_posts)
-        cards_count = sum(1 for item in published_posts if len(item) > 3 and item[3] == "photo")
-        reels_count = sum(1 for item in published_posts if len(item) > 3 and item[3] == "reel")
-        print(f"\n📊 الحصيلة التحريرية: {approved_count} منشور معتمد.")
-        print(f"🎨 الحصيلة الميدانية: {cards_count} بطاقة خبر + {reels_count} مقطع ريلز سينمائي.")
-        print(f"📊 استهلاك النماذج اليوم: {QUOTA_MANAGER.get_status_summary()}")
-    else:
-        print("\nلا توجد أخبار مؤهلة جديدة في هذه الجولة.")
-
-    return qualified
+    return taiz_qualified + yemen_qualified
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for dry-run execution and max-posts."""
     parser = argparse.ArgumentParser(
-        description="TaizNews AI — Automated News Reels & Publishing Engine"
+        description="TaizNews AI — Autonomous CentralBrain News Engine"
     )
     parser.add_argument(
         "--dry-run",
@@ -414,8 +555,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-posts",
         type=int,
-        default=int(os.getenv("MAX_POSTS_PER_RUN", "2")),
-        help="Maximum number of posts to publish/process per run (default: 2)",
+        default=None,
+        help="Optional upper bound on posts published in this run",
+    )
+    parser.add_argument(
+        "--skip-map-reel",
+        action="store_true",
+        default=os.getenv("ENABLE_MAP_REEL", "true").lower() in ("false", "0", "no"),
+        help="Disable interactive map reels for this run",
+    )
+    parser.add_argument(
+        "--map-schedule-minutes",
+        type=int,
+        default=int(os.getenv("MAP_REEL_SCHEDULE_MINUTES", "60")),
+        help="Retained for CLI compatibility",
     )
     return parser.parse_args()
 
@@ -431,10 +584,10 @@ def main() -> None:
     run_pipeline(
         dry_run=args.dry_run,
         max_posts=args.max_posts,
+        enable_map_reel=not args.skip_map_reel,
+        map_schedule_minutes=args.map_schedule_minutes,
     )
 
 
 if __name__ == "__main__":
     main()
-
-

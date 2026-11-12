@@ -52,5 +52,19 @@
     "first_request_at": null,
     "exhausted_at": "2026-09-20T21:14:03.236294+00:00",
     "exhausted_reason": "429 You exceeded your current quota"
+  },
+  "gemini-2.5-flash-lite": {
+    "usage_count": 0,
+    "daily_limit": 500,
+    "first_request_at": null,
+    "exhausted_at": null,
+    "exhausted_reason": null
+  },
+  "gemini-2.0-flash": {
+    "usage_count": 0,
+    "daily_limit": 20,
+    "first_request_at": null,
+    "exhausted_at": null,
+    "exhausted_reason": null
   }
 }
