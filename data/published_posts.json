@@ -24,8 +24,13 @@
     "post_type": "map_reel",
     "voice_id": "zariyah",
     "scope": "taiz",
-    "metrics": null,
-    "metrics_updated_at": null,
+    "metrics": {
+      "reactions": 8,
+      "comments": 0,
+      "shares": 0,
+      "engagement_score": 8
+    },
+    "metrics_updated_at": "2026-11-13T00:03:13.740462+00:00",
     "article_title": "مقتل مواطن وإصابة آخر بقصف حوثي على قرية في تعز",
     "article_url": "https://www.yemenmonitor.com/Details/ArtMID/908/ArticleID/187613?utm_source=rss&utm_medium=rss&utm_campaign=%25d9%2585%25d9%2582%25d8%25aa%25d9%2584-%25d9%2585%25d9%2588%25d8%25a7%25d8%25b7%25d9%2586-%25d9%2588%25d8%25a5%25d8%25b5%25d8%25a7%25d8%25a8%25d8%25a9-%25d8%25a2%25d8%25ae%25d8%25b1-%25d8%25a8%25d9%2582%25d8%25b5%25d9%2581-%25d8%25ad%25d9%2588%25d8%25ab%25d9%258a-%25d8%25b9%25d9%2584%25d9%2589-%25d9%2582%25d8%25b1%25d9%258a",
     "article_source": "يمن مونيتور",
@@ -137,12 +142,12 @@
     "photo_id": "2976289702751991",
     "post_url": "https://www.facebook.com/reel/2976289702751991",
     "metrics": {
-      "reactions": 6,
+      "reactions": 7,
       "comments": 0,
       "shares": 0,
-      "engagement_score": 6
+      "engagement_score": 7
     },
-    "metrics_updated_at": "2026-11-12T09:38:14.353821+00:00"
+    "metrics_updated_at": "2026-11-13T00:03:13.740462+00:00"
   },
   {
     "published_at": "2026-11-11T05:44:21.725635+00:00",
