@@ -1,5 +1,22 @@
 [
   {
+    "published_at": "2026-11-13T07:46:32.731570+00:00",
+    "headline": "مقتل مدني وإصابة طفل وشخص آخر برصاص قناصة حوثيين جنوبي تعز",
+    "body": "لقي مدني حتفه وأصيب طفل ومواطن آخر بجروح جراء استهدافهم برصاص قناصة المليشيات الحوثية المتمركزة في المناطق الجنوبية بمحافظة تعز. وأفادت مصادر محلية وصحفية بأن عمليات الاستهداف المباشر للمدنيين جرت في مناطق مأهولة، مما أسفر عن سقوط الضحايا ونقل المصابين إلى المراكز الطبية القريبة لتلقي العلاج وسط حالة شديدة من القلق بين الأهالي.",
+    "category": "أمن",
+    "post_type": "photo_card",
+    "voice_id": "",
+    "scope": "taiz",
+    "metrics": null,
+    "metrics_updated_at": null,
+    "article_title": "مقتل مدني وإصابة طفل وشخص آخر برصاص الحوثيين في تعز",
+    "article_url": "https://www.almashhad.news/news/506474",
+    "article_source": "المشهد اليمني",
+    "post_id": "1370905119430971_122134415685463181",
+    "photo_id": "122134415661463181",
+    "post_url": "https://www.facebook.com/1370905119430971_122134415685463181"
+  },
+  {
     "published_at": "2026-11-12T18:11:57.254945+00:00",
     "headline": "مجموعة السبع تطالب الحوثيين بفتح ممر إنساني عاجل لمدينة تعز",
     "body": "طالبت مجموعة الدول الصناعية السبع بفتح ممر إنساني عاجل في مدينة تعز لتسهيل وصول الإغاثة إلى المحتاجين. وأدان وزراء خارجية المجموعة في بيان عقب اجتماعهم في باريس الهجمات الحوثية المستمرة واستهداف المدنيين، داعين الجماعة إلى الإفراج الفوري وغير المشروط عن جميع العاملين في المجال الإنساني ووقف كافة التهديدات العسكرية لتجنب التصعيد.",
@@ -30,7 +47,7 @@
       "shares": 0,
       "engagement_score": 8
     },
-    "metrics_updated_at": "2026-11-13T00:03:13.740462+00:00",
+    "metrics_updated_at": "2026-11-13T07:44:43.799582+00:00",
     "article_title": "مقتل مواطن وإصابة آخر بقصف حوثي على قرية في تعز",
     "article_url": "https://www.yemenmonitor.com/Details/ArtMID/908/ArticleID/187613?utm_source=rss&utm_medium=rss&utm_campaign=%25d9%2585%25d9%2582%25d8%25aa%25d9%2584-%25d9%2585%25d9%2588%25d8%25a7%25d8%25b7%25d9%2586-%25d9%2588%25d8%25a5%25d8%25b5%25d8%25a7%25d8%25a8%25d8%25a9-%25d8%25a2%25d8%25ae%25d8%25b1-%25d8%25a8%25d9%2582%25d8%25b5%25d9%2581-%25d8%25ad%25d9%2588%25d8%25ab%25d9%258a-%25d8%25b9%25d9%2584%25d9%2589-%25d9%2582%25d8%25b1%25d9%258a",
     "article_source": "يمن مونيتور",
@@ -64,12 +81,12 @@
     "voice_id": "ali",
     "scope": "taiz",
     "metrics": {
-      "reactions": 15,
+      "reactions": 21,
       "comments": 0,
       "shares": 0,
-      "engagement_score": 15
+      "engagement_score": 21
     },
-    "metrics_updated_at": "2026-11-12T18:05:02.414607+00:00",
+    "metrics_updated_at": "2026-11-13T07:44:43.799582+00:00",
     "article_title": "القوات الحكومية تحبط تسللاً حوثياً في الأقروض جنوب تعز",
     "article_url": "https://www.almontasaf.net/news152657.html",
     "article_source": "GDELT / almontasaf.net",
@@ -86,12 +103,12 @@
     "voice_id": "saleh",
     "scope": "taiz",
     "metrics": {
-      "reactions": 18,
+      "reactions": 21,
       "comments": 0,
       "shares": 0,
-      "engagement_score": 18
+      "engagement_score": 21
     },
-    "metrics_updated_at": "2026-11-12T18:05:02.414607+00:00",
+    "metrics_updated_at": "2026-11-13T07:44:43.799582+00:00",
     "article_title": "مكتب حكومي: الحوثيون يختطفون ثلاثة مدنيين ويصيبون امرأة بقناصة في تعز",
     "article_url": "https://www.yemenmonitor.com/Details/ArtMID/908/ArticleID/187518?utm_source=rss&utm_medium=rss&utm_campaign=%25d9%2585%25d9%2583%25d8%25aa%25d8%25a8-%25d8%25ad%25d9%2583%25d9%2588%25d9%2585%25d9%258a-%25d8%25a7%25d9%2584%25d8%25ad%25d9%2588%25d8%25ab%25d9%258a%25d9%2588%25d9%2586-%25d9%258a%25d8%25ae%25d8%25aa%25d8%25b7%25d9%2581%25d9%2588%25d9%2586-%25d8%25ab%25d9%2584%25d8%25a7%25d8%25ab%25d8%25a9-%25d9%2585%25d8%25af%25d9%2586",
     "article_source": "يمن مونيتور",
@@ -111,12 +128,12 @@
     "photo_id": "4577991622475840",
     "post_url": "https://www.facebook.com/reel/4577991622475840",
     "metrics": {
-      "reactions": 8,
+      "reactions": 13,
       "comments": 0,
       "shares": 0,
-      "engagement_score": 8
+      "engagement_score": 13
     },
-    "metrics_updated_at": "2026-11-12T18:05:02.414607+00:00"
+    "metrics_updated_at": "2026-11-13T07:44:43.799582+00:00"
   },
   {
     "published_at": "2026-11-11T22:39:11.746889+00:00",
