@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from dotenv import load_dotenv
 
+from app.processing.safe_text import sanitize_for_tts_audio
+
 # Windows console encoding
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -687,10 +689,11 @@ def _generate_tts_gemini(
 # ==============================================================================
 
 def _prepare_vocalized_text(text: str) -> str:
-    """Clean and prepare Arabic text preserving 100% full tashkeel / diacritics for Maryam (Edge-TTS)."""
+    """Clean and prepare Arabic text with ASR safety and full vocalization for broadcast TTS."""
     if not text:
         return ""
-    clean = text.strip()
+    clean = sanitize_for_tts_audio(text)
+    clean = clean.strip()
     clean = re.sub(r"#\S+", "", clean)
     clean = re.sub(r"https?://\S+", "", clean)
     clean = re.sub(

@@ -28,6 +28,8 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.processing.safe_text import obfuscate_for_facebook_display
+
 REEL_WIDTH = 1080
 CANVAS_HEIGHT = 220
 
@@ -54,7 +56,7 @@ def _render_state_image(
     canvas = Image.new("RGBA", (REEL_WIDTH, CANVAS_HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
 
-    words = [strip_tashkeel(str(w.get("text", ""))) for w in chunk]
+    words = [obfuscate_for_facebook_display(strip_tashkeel(str(w.get("text", "")))) for w in chunk]
 
     word_lens = [draw.textlength(t, font=font, direction="rtl") for t in words]
     space_w = draw.textlength(" ", font=font, direction="rtl")

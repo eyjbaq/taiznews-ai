@@ -149,17 +149,9 @@ def _scrape_single_article(article: Article, timeout: int = 8) -> Article:
             total_len += sep_len + len(p)
 
         full_text = "\n".join(unique_paragraphs).strip()
-        resolved_image = article.image_url
-        if not resolved_image:
-            raw_img = parser.og_image or parser.twitter_image
-            if raw_img:
-                resolved_image = urljoin(url, raw_img)
-
         update_fields = {}
         if full_text:
             update_fields["full_text"] = full_text
-        if resolved_image and resolved_image != article.image_url:
-            update_fields["image_url"] = resolved_image
 
         if not update_fields:
             return article

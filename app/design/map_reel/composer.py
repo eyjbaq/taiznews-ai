@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw
 
 from app.design.tts_generator import _get_audio_duration_ffprobe, generate_news_audio
+from app.processing.safe_text import obfuscate_for_facebook_display
 
 from .base_map import (
     GAZETTEER,
@@ -160,24 +161,25 @@ def _create_bottom_gradient(width: int = W, height: int = 600) -> Image.Image:
 
 
 def _draw_hook_card(layer: Image.Image, hook_text: str, alpha: int = 255) -> None:
-    """Render high-impact Hook Headline Card during opening seconds with safe auto-wrap."""
+    """Render high-impact Hook Headline Card during opening seconds with safe auto-wrap and OCR defense."""
     if not hook_text or alpha <= 0:
         return
+    safe_hook = obfuscate_for_facebook_display(hook_text)
     d = ImageDraw.Draw(layer)
     max_text_w = W - 180
 
     font_size = 54
     font = get_map_font(font_size)
-    words = hook_text.strip().split()
+    words = safe_hook.strip().split()
 
     # Step down font size slightly if single-line or wrapped exceeds safe bounds
     lines: List[str] = []
     for candidate_size in (54, 48, 42):
         font = get_map_font(candidate_size)
-        shaped_full, dir_full = _fmt_ar(hook_text.strip())
+        shaped_full, dir_full = _fmt_ar(safe_hook.strip())
         bb_full = d.textbbox((0, 0), shaped_full, font=font, direction=dir_full)
         if (bb_full[2] - bb_full[0]) <= max_text_w:
-            lines = [hook_text.strip()]
+            lines = [safe_hook.strip()]
             break
 
         # Wrap into balanced lines (max 2 lines)
@@ -416,7 +418,10 @@ def _draw_subtitles_karaoke(
     active_sub_idx = active_word_idx - chunk_start
 
     d = ImageDraw.Draw(layer)
-    words_raw = [_clean_arabic_for_subtitles(str(w.get("text", ""))) or str(w.get("text", "")) for w in chunk]
+    words_raw = [
+        obfuscate_for_facebook_display(_clean_arabic_for_subtitles(str(w.get("text", ""))) or str(w.get("text", "")))
+        for w in chunk
+    ]
     words_fmt = [_fmt_ar(w) for w in words_raw]
 
     # Auto-fit font size so 4-word chunks never exceed horizontal margins

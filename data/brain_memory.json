@@ -5,10 +5,10 @@
   "last_sync_at": "2026-11-13T22:28:03.497698+00:00",
   "total_posts_analyzed": 6,
   "daily_caps": {
-    "max_daily_reels": 4,
-    "max_daily_photos": 10,
-    "max_daily_text_satire": 8,
-    "max_daily_yemen_trends": 2
+    "max_daily_reels": 8,
+    "max_daily_photos": 16,
+    "max_daily_text_satire": 24,
+    "max_daily_yemen_trends": 6
   },
   "format_performance": {
     "text_satire": {

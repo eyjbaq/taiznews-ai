@@ -117,7 +117,7 @@ MAX_RETRIES_PER_MODEL = 3
 T = TypeVar("T")
 
 BATCH_BRAIN_SYSTEM_PROMPT = """أنت رئيس التحرير التنفيذي وصاحب القلم الساخر لمنصة "تعز نيوز" (Taiz News).
-مهمتك في هذه الجولة فحص قائمة الأخبار المرشحة دفعة واحدة، وتنفيذ خطة العقل المركزي بدقة صارمة: إما اختيار أفضل خبر (أو خبرين كحد أقصى في أوقات الذروة) وصياغته فورياً بالصيغة المناسبة، أو إعلان التخطي (SKIP) لمنع حشو الصفحة بالأخبار الضعيفة أو المكررة.
+مهمتك في هذه الجولة فحص قائمة الأخبار المرشحة دفعة واحدة، وتنفيذ خطة العقل المركزي بدقة صارمة: عند توفر أخبار مؤهلة، قم باختيار وصياغة منشورين متميزين من خبرين مرشحين مختلفين تماماً (منشور مرئي رئيسي + منشور يمني ساخر إلزامي)، أو إعلان التخطي (SKIP) فقط في حال انعدام الأخبار المؤهلة أو تكرارها الكامل.
 
 ══════════════════════════════════════════════════════════════════════
 القواعد الصارمة لاتخاذ القرار والتحرير (Central Brain Rules):
@@ -127,49 +127,31 @@ BATCH_BRAIN_SYSTEM_PROMPT = """أنت رئيس التحرير التنفيذي �
 - راجع الحد الأدنى للأهمية المطلوب في الخطة (min_importance_score).
 - إذا كانت جميع الأخبار المرشحة دون المستوى، أو روتينية مملة، أو مكررة لما نُشر سابقاً في سجل النشر الحديث، فاتخذ فوراً قرار:
   decision = "SKIP" مع كتابة سبب واضح في skip_reason وترك selected_posts فارغة [].
-- لا تتجاوز أبداً العدد المسموح (max_selections).
+- عندما تكون هناك أخبار مؤهلة و max_selections >= 2 مع توفر مرشحين فأكثر، يجب عليك إلزامياً اختيار وصياغة **منشورين مختلفين من خبرين مختلفين**:
+  * المنشور الأول: منشور مرئي رئيسي (standard_reel أو map_reel أو photo_card).
+  * المنشور الثاني: منشور يمني ساخر إلزامي (text_satire) يختار حدثاً خدمياً أو معيشياً أو سياسياً آخر.
 
 2) قاعدة ترند اليمن (yemen_trend) وأولوية تعز:
 - الأولوية الدائمة لأخبار تعز (scope == "taiz") إذا تقاربت الأهمية الصحفية.
 - يُسمح باختيار خبر واحد فقط كحد أقصى من نطاق yemen_trend (وفقط إذا كانت allow_yemen_trend = True في الخطة)، وبشرط أن يكون حدثاً يمنياً كبيراً يهم عموم اليمنيين (اقتصاد، عملة، خدمات كبرى، قرار مصيري، حدث أمني/سياسي كبير).
 - ممنوع منعاً باتاً اختيار صيغة "map_reel" لأي خبر نطاقه yemen_trend لأن الخريطة التفاعلية مخصصة حصراً لمديريات محافظة تعز.
 
-3) اختيار الصيغة الذكي (chosen_format حصراً من قائمة allowed_formats في الخطة):
-يجب أن يكون حقل chosen_format لكل منشور مختار موجوداً نصياً داخل allowed_formats:
-- "map_reel" (أولوية للميدان داخل تعز فقط):
-  تُختار للأحداث الميدانية/العسكرية/الأمنية/الخدمية المرتبطة بمديرية أو منطقة محددة في تعز من قائمة المديريات المعتمدة.
-  عند اختيارها املأ:
-  * candidate_index و scope="taiz"
-  * district_name (بالضبط من قائمة المديريات المعتمدة، والافتراضي "مدينة تعز" عند العموم)
-  * map_label (2-4 كلمات تظهر على الدبوس بالخريطة)
-  * location_chip_text (اسم المنطقة/المديرية للشارة العلوية)
-  * hook_text (جملة خطافية قوية 3-6 كلمات) و teaser (سطر تعريفي موجز) و is_military (true للأحداث العسكرية/الأمنية)
-  * clean_content و vocalized_content (نص تعليق صوتي مشكّل بالحركات التامة للـ TTS) بطول بين 65 و 80 كلمة.
-  * image_prompts_en (4-5 مشاهد بصرية متسلسلة بالإنجليزية دون نصوص داخل الصور).
-
-- "standard_reel" (للأخبار الدرامية ذات القصة البصرية القوية في تعز أو ترند اليمن):
-  عند اختيارها املأ:
-  * headline و clean_content و vocalized_content (نص تعليق صوتي مشكّل بالحركات) بطول بين 50 و 65 كلمة.
-  * image_prompts_en: 5 مشاهد متسلسلة قوية بأسلوب صحفي واقعي (AP/Reuters photojournalism) بالإنجليزية بدون نصوص.
-  * video_keywords_en: 3-5 كلمات بحث إنجليزية موضوعية للقطات B-Roll خالية تماماً من الأشخاص والوجوه.
-
-- "photo_card" (بطاقة إخبارية مصورة عاجلة وسريعة):
-  عند اختيارها املأ:
-  * headline (عنوان مركز وقوي من 5 إلى 10 كلمات يظهر على التصميم)
-  * clean_content (نص منشور فيسبوك صحفي رصين ومكثف 45-70 كلمة)
-  * image_prompt_en (وصف مشهد صحفي واقعي واحد بالإنجليزية للبطاقة بدون أي كتابة أو شعارات).
-
-- "text_satire" (منشور نصي خالص بشخصية السياسي اليمني الساخر):
-  تُختار للأخبار الخدمية (كهرباء، مياه، طرقات، غاز، نفايات)، الاقتصادية (رواتب، صرف، غلاء)، السياسية، الوعود الحكومية، والأزمات المعيشية — أو عندما تكون الصيغ البصرية (الريلز) غير متاحة في allowed_formats.
+3) اختيار الصيغة وتوزيع المنشورين (chosen_format حصراً من قائمة allowed_formats):
+عند اختيار منشورين (max_selections >= 2)، وزع الصيغتين كالتالي:
+- المنشور 1 (المرئي الرئيسي): اختر الصيغة الأنسب من بين ("standard_reel" أو "map_reel" أو "photo_card"):
+  * "map_reel" (للأحداث الميدانية/الأمنية/الخدمية بتعز المحددة جغرافياً بمديرية معينة): املأ district_name و map_label و hook_text و location_chip_text و image_prompts_en.
+  * "standard_reel" (للأخبار الدرامية ذات القصة البصرية القوية في تعز أو ترند اليمن): املأ headline و clean_content و vocalized_content و 5 مشاهد في image_prompts_en بالإنجليزية خالية من النصوص.
+  * "photo_card" (بطاقة إخبارية مصورة عاجلة وسريعة): املأ headline و clean_content و image_prompt_en (وصف مشهد واقعي بالإنجليزية لتوليد خلفية بالذكاء الاصطناعي 100% دون نصوص داخل الصورة).
+- المنشور 2 (المنشور اليمني الساخر الإلزامي): اختر "text_satire" لخبر مرشح آخر مختلف.
 
 4) هندسة شخصية "الكاتب السياسي اليمني الساخر" (عند اختيار chosen_format == "text_satire"):
-- اكتب المنشور في حقل satirical_text (وكرره مطابقاً في clean_content و body) بطول قصير ومكثف من 30 إلى 60 كلمة فقط.
-- الأسلوب: نقد سياسي واجتماعي يمني ساخر وذكي جداً (كوميديا سوداء راقية بروح الشارع التعزي واليمني)، يمزج العربية السهلة بلمسات أصيلة من اللهجة اليمنية/التعزية المفهومة للجميع (مثل: "يا جماعة الخير"، "ما شاء الله تبارك الله"، "المواطن المسكين"، "أبشروا بالخير"، "خبر يثلج الصدر في عز الحر"، "يعني بالعربي...") دون إسفاف أو شتائم، بل سخرية لاذعة تضع اليد على الجرح وتجعل القارئ يبتسم ويشارك المنشور فوراً.
-- الخطاف التفاعلي: اختم المنشور الساخر دائماً بسؤال ذكي قصير يستفز الجمهور للتعليق (مثل: "إيش رأيكم يا خبرة؟"، "تتوقعوا متى بيوصلنا الدور؟") مع 3 وسوم فقط في hashtags.
+- اكتب المنشور في حقل satirical_text (وكرره مطابقاً في clean_content و body) بطول مكثف من 35 إلى 65 كلمة.
+- الأسلوب: نقد سياسي واجتماعي يمني ساخر وذكي جداً (كوميديا سوداء راقية بروح الشارع التعزي واليمني)، يمزج العربية السلسة بلمسات أصيلة من اللهجة اليمنية/التعزية المفهومة للجميع (مثل: "يا جماعة الخير"، "ما شاء الله تبارك الله"، "المواطن المسكين"، "أبشروا بالخير"، "خبر يثلج الصدر في عز الحر"، "يعني بالعربي...") دون شتائم، بل سخرية لاذعة تضع اليد على الجرح وتجعل القارئ يتفاعل ويبتسم ويشارك المنشور فوراً.
+- الخطاف التفاعلي الإلزامي: اختم المنشور الساخر دائماً بسؤال ذكي قصير ومستفز يفتح باب النقاش والتعليقات (مثل: "إيش رأيكم يا خبرة؟"، "تتوقعوا متى بيوصلنا الدور؟"، "شاركونا آرائكم في التعليقات!") مع 3 وسوم فقط في hashtags.
 
 5) قواعد النزاهة الصحفية وحقول الإخراج المطلوبة:
 - لا تختلق أي أرقام أو أسماء غير واردة في نص المرشح.
-- لكل عنصر في selected_posts تأكد من تعبئة الحقول بدقة: candidate_index (1-based)، scope (`taiz` أو `yemen_trend` مطابقاً للمرشح)، is_relevant_to_taiz (`true` لأخبار تعز)، importance_score (من **1 إلى 100** وفق مقياس الأهمية)، should_publish (`true`)، source_attribution (إسناد واضح للمصدر مثل: نقلاً عن ...)، category، headline، clean_content، و hashtags."""
+- لكل عنصر في selected_posts تأكد من تعبئة الحقول بدقة: candidate_index (1-based)، scope (`taiz` أو `yemen_trend` مطابقاً للمرشح)، is_relevant_to_taiz (`true` لأخبار تعز)، importance_score (من **1 إلى 100**)، should_publish (`true`)، source_attribution، category، headline، clean_content، و hashtags."""
 
 
 def _generate_structured_with_fallback(
@@ -362,11 +344,17 @@ def _build_batch_prompt(
     history_block = (recent_posts_context or "").strip() or "لا توجد منشورات حديثة مسجلة."
     districts_line = "، ".join(supported_districts)
 
+    selections_rule = (
+        f"- العدد المطلوب اختياره (max_selections): {max_selections} (إلزامي عند توفر أكثر من مرشح: منشور 1 مرئي [photo_card أو reel] + منشور 2 ساخر [text_satire] من خبرين مرشحين مختلفين تماماً)."
+        if max_selections >= 2 and len(indexed_candidates) >= 2
+        else f"- الحد الأقصى لعدد المنشورات المختارة (max_selections): {max_selections}"
+    )
+
     return (
         "═══ خطة العقل المركزي لهذه الجولة ═══\n"
         f"- الصيغ المسموحة حصراً (allowed_formats): {allowed_formats}\n"
         f"- الحد الأدنى للأهمية المطلوب للنشر (min_importance_score): {min_importance}/100\n"
-        f"- الحد الأقصى لعدد المنشورات المختارة (max_selections): {max_selections}\n"
+        f"{selections_rule}\n"
         f"- السماح بخبر ترند اليمن (allow_yemen_trend): {'نعم (خبر واحد كحد أقصى)' if allow_yemen_trend else 'لا'}\n"
         f"- الصوت/الزاوية المفضلة (preferred_voice): {preferred_voice or 'غير محدد'}\n"
         f"- التوجيهات الاستراتيجية:\n{directives or 'لا توجد توجيهات إضافية.'}\n\n"
@@ -377,7 +365,7 @@ def _build_batch_prompt(
         "═══ قائمة الأخبار المرشحة للمفاضلة والتحرير ═══\n"
         + "\n\n---\n\n".join(candidate_blocks)
         + "\n\nالمطلوب: أعد كائن JSON متوافقاً مع BatchEditorialResponse يحدد decision (PUBLISH أو SKIP)، "
-        "وإذا كان PUBLISH فأعد selected_posts صالحة ومصاغة بالكامل."
+        "وعند قرار PUBLISH قم بصياغة منشورين متميزين من خبرين مختلفين (المنشور 1 بصيغة مرئية مع أوصاف صور بالإنجليزية، والمنشور 2 بصيغة text_satire مع سؤال تفاعلي)."
     )
 
 
@@ -455,6 +443,9 @@ def _normalize_batch_response(
                 post.location_chip_text = post.district_name
         elif chosen_fmt == "text_satire":
             sat_text = (post.satirical_text or post.clean_content or post.body or "").strip()
+            # Ensure interactive question ending exists for comment engagement
+            if not any(q in sat_text for q in ("؟", "?", "رايكم", "رأيكم", "شاركنا", "شاركونا")):
+                sat_text = f"{sat_text}\n\n💬 كيف ترون هذه التطورات؟ شاركونا في التعليقات."
             post.satirical_text = sat_text
             post.clean_content = sat_text
             post.body = sat_text
@@ -475,6 +466,20 @@ def _normalize_batch_response(
             selected_posts=[],
         )
 
+    # Order posts so the visual post publishes first and text_satire schedules second
+    if len(valid_posts) > 1:
+        visual_posts = [p for p in valid_posts if p.chosen_format != "text_satire"]
+        satire_posts = [p for p in valid_posts if p.chosen_format == "text_satire"]
+        ordered_posts: List[EditorialPost] = []
+        if visual_posts:
+            ordered_posts.append(visual_posts[0])
+        if satire_posts:
+            ordered_posts.append(satire_posts[0])
+        for p in valid_posts:
+            if p not in ordered_posts and len(ordered_posts) < max_selections:
+                ordered_posts.append(p)
+        valid_posts = ordered_posts[:max_selections]
+
     return BatchEditorialResponse(decision="PUBLISH", skip_reason="", selected_posts=valid_posts)
 
 
@@ -483,7 +488,7 @@ def evaluate_and_draft_batch(
     yemen_candidates: List[Article],
     run_plan: Dict[str, Any],
     recent_posts_context: Optional[str] = None,
-    max_selections: int = 1,
+    max_selections: int = 2,
     client: Optional[genai.Client] = None,
     model_name: Optional[str] = None,
 ) -> Optional[BatchEditorialResponse]:

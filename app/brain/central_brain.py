@@ -27,14 +27,14 @@ DEFAULT_MEMORY_PATH = BASE_DIR / "data" / "brain_memory.json"
 DEFAULT_VOICE_STATE_PATH = BASE_DIR / "data" / "voice_state.json"
 
 # Operating windows in Yemen local time (UTC+3)
-PEAK_HOURS = set(range(12, 16)) | set(range(18, 24))  # 12:00-15:59 & 18:00-23:59
-QUIET_HOURS = set(range(2, 6))                        # 02:00-05:59 AM
+PEAK_HOURS = set(range(11, 24)) | {0}  # 11:00 AM - 00:59 AM (Peak engagement window)
+QUIET_HOURS = set(range(2, 6))         # 02:00 AM - 05:59 AM (Dawn quiet hours)
 
 DEFAULT_DAILY_CAPS: Dict[str, int] = {
-    "max_daily_reels": 4,
-    "max_daily_photos": 10,
-    "max_daily_text_satire": 8,
-    "max_daily_yemen_trends": 2,
+    "max_daily_reels": 8,
+    "max_daily_photos": 16,
+    "max_daily_text_satire": 24,
+    "max_daily_yemen_trends": 6,
 }
 
 DEFAULT_FORMATS = ("text_satire", "photo_card", "standard_reel", "map_reel")
@@ -137,8 +137,8 @@ class CentralBrain:
             modified = True
         else:
             for cap_k, cap_v in DEFAULT_DAILY_CAPS.items():
-                if cap_k not in raw["daily_caps"]:
-                    raw["daily_caps"][cap_k] = cap_v
+                if cap_k not in raw["daily_caps"] or int(raw["daily_caps"].get(cap_k, 0)) < cap_v:
+                    raw["daily_caps"][cap_k] = max(int(raw["daily_caps"].get(cap_k, 0)), cap_v)
                     modified = True
 
         for group_key, expected_keys in (
@@ -460,7 +460,7 @@ class CentralBrain:
         allow_urgent_override = False
 
         if is_quiet_hour:
-            # Dawn quiet hours (02:00-05:59): skip routine publishing; allow urgent >= 92 only
+            # Dawn quiet hours (02:00-05:59): skip routine publishing; allow urgent >= 85 only
             if photos_rem > 0:
                 allowed_formats.append("photo_card")
             if reels_rem > 0:
@@ -468,7 +468,7 @@ class CentralBrain:
             should_run = False
             allow_urgent_override = len(allowed_formats) > 0
             decision = "URGENT_ONLY" if allow_urgent_override else "SKIP"
-            min_importance_score = 92
+            min_importance_score = 85
             allow_yemen_trend = False
         elif is_peak_hour and reels_rem > 0:
             # Peak hours with remaining reel budget: prioritize video reels first
@@ -482,19 +482,21 @@ class CentralBrain:
             allowed_formats = reel_tier + secondary_tier
             should_run = True
             decision = "PUBLISH"
-            min_importance_score = 65
+            min_importance_score = 55
             allow_yemen_trend = yemen_rem > 0
         else:
-            # Off-peak hours OR daily reel cap reached (4/4): focus on photo_card & text_satire
+            # Off-peak hours OR daily reel cap reached: focus on photo_card & text_satire
             non_reel: List[str] = []
             if photos_rem > 0:
                 non_reel.append("photo_card")
             if satire_rem > 0:
                 non_reel.append("text_satire")
+            if reels_rem > 0:
+                non_reel.append("standard_reel")
             allowed_formats = self._sort_formats_by_memory(non_reel, memory)
             should_run = len(allowed_formats) > 0
             decision = "PUBLISH" if should_run else "SKIP"
-            min_importance_score = 70
+            min_importance_score = 50
             allow_yemen_trend = yemen_rem > 0 and should_run
 
         top_fmt = self._top_performer(memory.get("format_performance", {}))

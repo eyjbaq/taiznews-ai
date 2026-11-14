@@ -58,8 +58,8 @@ from app.publisher.facebook import (
 
 CONFIG_PATH = Path(__file__).resolve().parent / "config" / "sources.yaml"
 LOGGER = logging.getLogger(__name__)
-QUIET_HOUR_LOCAL_SCORE_THRESHOLD = 105.0
-SECOND_POST_DELAY_SECONDS = 35 * 60
+QUIET_HOUR_LOCAL_SCORE_THRESHOLD = 85.0
+SECOND_POST_DELAY_SECONDS = 25 * 60
 FATAL_FB_ERROR_CODES = (190, 102, 10)
 
 # Backwards compatibility alias
@@ -320,23 +320,14 @@ def _dispatch_selected_post(
 
 
 def _resolve_max_selections(run_plan: Dict[str, Any], max_posts: Optional[int]) -> int:
-    """Allow 2 posts only during peak hours when daily output is below half capacity, else 1."""
-    today_counts = run_plan.get("today_counts", {})
-    caps = run_plan.get("daily_caps", {})
-    total_cap = sum(
-        int(caps.get(k, 0))
-        for k in ("max_daily_reels", "max_daily_photos", "max_daily_text_satire")
-    )
-    today_total = int(today_counts.get("total_posts", 0))
-
-    if run_plan.get("is_peak_hour") and today_total < (total_cap / 2.0):
-        target = 2
-    else:
-        target = 1
-
+    """Select 2 posts (Visual post + mandatory Satire post) during normal runs; 1 during quiet hours."""
     if max_posts is not None:
-        target = max(0, min(target, int(max_posts)))
-    return target
+        return max(0, int(max_posts))
+
+    if run_plan.get("is_quiet_hour"):
+        return 1
+
+    return 2
 
 
 def run_pipeline(

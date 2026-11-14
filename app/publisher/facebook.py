@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from app.collector.base import Article
 from app.ai.models import EditorialPost
+from app.processing.safe_text import obfuscate_for_facebook_display
 
 load_dotenv()
 LOGGER = logging.getLogger(__name__)
@@ -22,11 +23,15 @@ GRAPH_API_VERSION = "v19.0"
 
 
 def format_facebook_caption(post: EditorialPost, article: Optional[Article] = None) -> str:
-    """Format the headline, body, and hashtags for Facebook without links or external attribution."""
+    """Format the headline, body, interactive CTA, and hashtags for Facebook with algorithm defense."""
+    raw_headline = post.headline.strip()
+    safe_headline = obfuscate_for_facebook_display(raw_headline)
+
     body = post.body.strip()
     body = re.sub(r"نقلا[ً]? عن [^\s،.]+( [^\s،.]+)?", "", body)
     body = re.sub(r"بحسب [^\s،.]+( [^\s،.]+)?", "", body)
     body = re.sub(r"\s+", " ", body).strip()
+    safe_body = obfuscate_for_facebook_display(body)
 
     tags: list[str] = []
     for h in post.hashtags:
@@ -42,10 +47,14 @@ def format_facebook_caption(post: EditorialPost, article: Optional[Article] = No
         if core_tag not in tags:
             tags.append(core_tag)
 
+    interactive_prompt = "💬 شاركنا رأيك في التعليقات.. كيف ترى هذه التطورات؟"
+
     lines = [
-        f"🔴 {post.headline.strip()}",
+        f"🔴 {safe_headline}",
         "",
-        body,
+        safe_body,
+        "",
+        interactive_prompt,
         "",
         " ".join(tags),
     ]
@@ -53,7 +62,7 @@ def format_facebook_caption(post: EditorialPost, article: Optional[Article] = No
 
 
 def format_satirical_caption(post: EditorialPost) -> str:
-    """Format a conversational Yemeni satirical text post without breaking-news prefixes or attributions."""
+    """Format a conversational Yemeni satirical text post with algorithm defense."""
     raw_text = (
         getattr(post, "satirical_text", "")
         or getattr(post, "clean_content", "")
@@ -65,6 +74,7 @@ def format_satirical_caption(post: EditorialPost) -> str:
     clean = re.sub(r"بحسب [^\s،.]+( [^\s،.]+)?", "", clean)
     clean = re.sub(r"وفقا[ً]? ل[^\s،.]+( [^\s،.]+)?", "", clean)
     clean = re.sub(r"\s+", " ", clean).strip()
+    safe_clean = obfuscate_for_facebook_display(clean)
 
     tags: list[str] = []
     for h in getattr(post, "hashtags", []) or []:
@@ -87,7 +97,7 @@ def format_satirical_caption(post: EditorialPost) -> str:
         extras = [t for t in tags if t not in essential]
         tags = (extras[: max(0, 4 - len(essential))] + essential)[:4]
 
-    return f"{clean}\n\n{' '.join(tags)}".strip()
+    return f"{safe_clean}\n\n{' '.join(tags)}".strip()
 
 
 def format_facebook_reel_caption(post: EditorialPost, article: Optional[Article] = None) -> str:
@@ -98,6 +108,7 @@ def format_facebook_reel_caption(post: EditorialPost, article: Optional[Article]
     """
     headline = post.headline.strip()
     headline = re.sub(r"^(🔴\s*)+", "", headline).strip()
+    safe_headline = obfuscate_for_facebook_display(headline)
 
     # 1. Extract a concise, intriguing teaser (1 sentence) rather than the whole spoken body
     body_text = (getattr(post, "clean_content", "") or getattr(post, "body", "")).strip()
@@ -131,9 +142,11 @@ def format_facebook_reel_caption(post: EditorialPost, article: Optional[Article]
     if teaser and teaser.lower() in headline.lower():
         teaser = ""
 
-    lines = [f"🔴 {headline}"]
-    if teaser:
-        lines.append(f"{teaser}.. {cta}")
+    safe_teaser = obfuscate_for_facebook_display(teaser) if teaser else ""
+
+    lines = [f"🔴 {safe_headline}"]
+    if safe_teaser:
+        lines.append(f"{safe_teaser}.. {cta}")
     else:
         lines.append(cta)
     lines.append("")
@@ -189,6 +202,7 @@ def format_map_reel_caption(story: Any, article: Optional[Article] = None) -> Tu
     short_title = shorten_headline(getattr(story, "headline", "") or "", max_chars=75)
     if not short_title and article:
         short_title = shorten_headline(article.title, max_chars=75)
+    safe_short_title = obfuscate_for_facebook_display(short_title)
 
     # Extract concise curiosity-inducing teaser distinct from headline
     raw_teaser = (getattr(story, "teaser", "") or "").strip()
@@ -206,6 +220,8 @@ def format_map_reel_caption(story: Any, article: Optional[Article] = None) -> Tu
 
     if raw_teaser and (raw_teaser.lower() in short_title.lower() or short_title.lower() in raw_teaser.lower()):
         raw_teaser = ""
+
+    safe_teaser = obfuscate_for_facebook_display(raw_teaser) if raw_teaser else ""
 
     cta = "🗺️ شاهد التفاصيل الميدانية على الخريطة التفاعلية ⬇️"
 
@@ -234,9 +250,9 @@ def format_map_reel_caption(story: Any, article: Optional[Article] = None) -> Tu
             all_tags.append(tag)
     all_tags = all_tags[:7]
 
-    lines = [f"🔴 {short_title}"]
-    if raw_teaser:
-        lines.append(f"{raw_teaser}.. {cta}")
+    lines = [f"🔴 {safe_short_title}"]
+    if safe_teaser:
+        lines.append(f"{safe_teaser}.. {cta}")
     else:
         lines.append(cta)
     lines.append("")
