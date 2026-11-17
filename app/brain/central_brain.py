@@ -31,10 +31,12 @@ PEAK_HOURS = set(range(11, 24)) | {0}  # 11:00 AM - 00:59 AM (Peak engagement wi
 QUIET_HOURS = set(range(2, 6))         # 02:00 AM - 05:59 AM (Dawn quiet hours)
 
 DEFAULT_DAILY_CAPS: Dict[str, int] = {
-    "max_daily_reels": 8,
+    "max_daily_reels": 6,
+    "max_daily_standard_reels": 3,
+    "max_daily_map_reels": 3,
     "max_daily_photos": 16,
-    "max_daily_text_satire": 24,
-    "max_daily_yemen_trends": 6,
+    "max_daily_text_satire": 1,
+    "max_daily_yemen_trends": 4,
 }
 
 DEFAULT_FORMATS = ("text_satire", "photo_card", "standard_reel", "map_reel")
@@ -132,14 +134,7 @@ class CentralBrain:
                 modified = True
 
         # Ensure required subkeys exist inside caps and performance dictionaries
-        if not isinstance(raw.get("daily_caps"), dict):
-            raw["daily_caps"] = dict(DEFAULT_DAILY_CAPS)
-            modified = True
-        else:
-            for cap_k, cap_v in DEFAULT_DAILY_CAPS.items():
-                if cap_k not in raw["daily_caps"] or int(raw["daily_caps"].get(cap_k, 0)) < cap_v:
-                    raw["daily_caps"][cap_k] = max(int(raw["daily_caps"].get(cap_k, 0)), cap_v)
-                    modified = True
+        raw["daily_caps"] = dict(DEFAULT_DAILY_CAPS)
 
         for group_key, expected_keys in (
             ("format_performance", DEFAULT_FORMATS),
@@ -156,10 +151,48 @@ class CentralBrain:
                     group[k] = _empty_perf_bucket()
                     modified = True
 
+        # Check if historical bias needs to be reset (weights > 1.25 or legacy version)
+        has_excessive_bias = any(
+            float(bucket.get("weight", 1.0)) > 1.25
+            for group_k in ("format_performance", "category_performance", "voice_performance")
+            for bucket in raw.get(group_k, {}).values()
+            if isinstance(bucket, dict)
+        )
+        if raw.get("version", 1) < 2 or has_excessive_bias:
+            for group_k in ("format_performance", "category_performance", "voice_performance"):
+                for bucket in raw.get(group_k, {}).values():
+                    if isinstance(bucket, dict):
+                        bucket["weight"] = 1.0
+                        bucket["avg_engagement"] = 0.0
+                        bucket["count"] = 0
+                        bucket["total_engagement"] = 0
+            raw["total_posts_analyzed"] = 0
+            raw["version"] = 2
+            raw["learnings_summary"] = "تم تصفير الأوزان وإعادة ضبط الذاكرة لمنع الانحياز وضمان التنوع التام."
+            modified = True
+
         if modified:
             self.save_memory(raw)
 
         return raw
+
+    def reset_biased_weights(self) -> Dict[str, Any]:
+        """Reset accumulated historical weights and averages to 1.0 to eliminate previous voice/format monopoly."""
+        memory = self.load_memory()
+        for group_key in ("format_performance", "category_performance", "voice_performance"):
+            group = memory.setdefault(group_key, {})
+            for bucket in group.values():
+                if isinstance(bucket, dict):
+                    bucket["weight"] = 1.0
+                    bucket["avg_engagement"] = 0.0
+                    bucket["count"] = 0
+                    bucket["total_engagement"] = 0
+        memory["total_posts_analyzed"] = 0
+        memory["version"] = 2
+        memory["learnings_summary"] = "تم تصفير الأوزان وإعادة ضبط الذاكرة لمنع الانحياز وضمان التنوع التام."
+        self.save_memory(memory)
+        LOGGER.info("Reset central brain memory weights to 1.0 across all buckets.")
+        return memory
 
     def save_memory(self, memory: Dict[str, Any]) -> None:
         """Persist brain memory atomically with UTF-8 encoding."""
@@ -192,14 +225,18 @@ class CentralBrain:
         if old_score is None:
             bucket["count"] = int(bucket.get("count", 0)) + 1
             bucket["total_engagement"] = max(0, int(bucket.get("total_engagement", 0)) + new_score)
+            old_avg = float(bucket.get("avg_engagement", 0.0))
+            if old_avg <= 0.0 or int(bucket["count"]) <= 1:
+                new_avg = float(new_score)
+            else:
+                new_avg = (old_avg * 0.65) + (float(new_score) * 0.35)
+            bucket["avg_engagement"] = round(new_avg, 2)
         else:
             delta = new_score - int(old_score)
             bucket["total_engagement"] = max(0, int(bucket.get("total_engagement", 0)) + delta)
-            if int(bucket.get("count", 0)) == 0:
-                bucket["count"] = 1
-
-        count = int(bucket["count"])
-        bucket["avg_engagement"] = round(bucket["total_engagement"] / count, 2) if count > 0 else 0.0
+            old_avg = float(bucket.get("avg_engagement", 0.0))
+            new_avg = (old_avg * 0.65) + (float(new_score) * 0.35)
+            bucket["avg_engagement"] = round(new_avg, 2)
 
     @staticmethod
     def _recalculate_weights(group: Dict[str, Dict[str, Any]]) -> None:
@@ -211,7 +248,8 @@ class CentralBrain:
                 bucket["weight"] = 1.0
             else:
                 ratio = float(bucket.get("avg_engagement", 0.0)) / global_avg
-                bucket["weight"] = round(min(2.0, max(0.5, ratio)), 3)
+                # Maximum weight capped strictly at 1.25 to prevent monopoly
+                bucket["weight"] = round(min(1.25, max(0.75, ratio)), 3)
 
     @staticmethod
     def _top_performer(group: Dict[str, Dict[str, Any]], min_count: int = 1) -> Optional[Tuple[str, float]]:
@@ -321,28 +359,56 @@ class CentralBrain:
             "skipped_reason": None,
         }
 
-    def _read_last_voice_key(self) -> str:
-        """Read normalized key of the last used voice from voice_state.json."""
+    def _read_last_two_voice_keys(self) -> List[str]:
+        """Read the last two unique voice IDs used from published_posts.json."""
         try:
-            if self.voice_state_path.exists():
-                state = json.loads(self.voice_state_path.read_text(encoding="utf-8"))
-                raw_last = str(state.get("last_voice_key") or state.get("last_voice_id") or "")
-                return self._normalize_voice_key(raw_last)
-        except (OSError, json.JSONDecodeError):
-            pass
-        return ""
+            history = load_published_history(self.history_path)
+            used_voices: List[str] = []
+            for entry in history:
+                raw_v = str(entry.get("voice_id") or "").strip().lower()
+                norm_v = self._normalize_voice_key(raw_v)
+                if norm_v and norm_v not in used_voices:
+                    used_voices.append(norm_v)
+                    if len(used_voices) >= 2:
+                        break
+            if len(used_voices) < 2 and self.voice_state_path.exists():
+                try:
+                    state = json.loads(self.voice_state_path.read_text(encoding="utf-8"))
+                    raw_last = str(state.get("last_voice_key") or "").strip().lower()
+                    norm_last = self._normalize_voice_key(raw_last)
+                    if norm_last and norm_last not in used_voices:
+                        used_voices.append(norm_last)
+                except Exception:
+                    pass
+            return used_voices
+        except Exception as exc:
+            LOGGER.warning("Could not read recent voices from history: %s", exc)
+            return []
 
-    @staticmethod
-    def _next_in_rotation(candidates: List[str], last_key: str, fallback: str) -> str:
-        """Return the next candidate after last_key in list order."""
-        if not candidates:
-            return fallback
-        if last_key in candidates:
-            return candidates[(candidates.index(last_key) + 1) % len(candidates)]
-        return candidates[0]
+    def _read_recent_history_context(self) -> Tuple[str, str]:
+        """Return (last_post_type, last_video_type) from published_posts.json."""
+        try:
+            history = load_published_history(self.history_path)
+            last_post_type = ""
+            last_video_type = ""
+            for entry in history:
+                ptype = infer_post_type(entry)
+                if not last_post_type:
+                    last_post_type = ptype
+                if not last_video_type and ptype in ("standard_reel", "map_reel"):
+                    last_video_type = ptype
+                if last_post_type and last_video_type:
+                    break
+            return last_post_type, last_video_type
+        except Exception as exc:
+            LOGGER.warning("Could not read recent post formats from history: %s", exc)
+            return "", ""
 
     def _select_preferred_voice(self, memory: Dict[str, Any]) -> str:
-        """Select voice using initial exploration (untried count==0) then 70% exploit / 30% explore."""
+        """Select preferred voice strictly excluding the last 2 used voices to break monopolies.
+
+        Picks the candidate with the lowest historical count among the remaining available voices.
+        """
         has_elevenlabs = bool(os.getenv("ELEVENLABS_API_KEY", "").strip()) and (
             os.getenv("ENABLE_ELEVENLABS", "true").strip().lower() not in ("false", "0", "no")
         )
@@ -350,33 +416,19 @@ class CentralBrain:
         if not available_voices:
             available_voices = ["maryam", "saleh", "ali", "zariyah"]
 
+        last_two = self._read_last_two_voice_keys()
+        candidates = [v for v in available_voices if v not in last_two]
+
+        # If exclusions left no candidates, exclude only the most recent voice
+        if not candidates:
+            last_one = last_two[:1]
+            candidates = [v for v in available_voices if v not in last_one] or available_voices
+
         voice_perf = memory.get("voice_performance", {})
-        last_key = self._read_last_voice_key()
 
-        # Phase 1: Initial exploration — prioritize untried voices (count == 0) in rotation
-        untried = [v for v in available_voices if int(voice_perf.get(v, {}).get("count", 0)) == 0]
-        if untried:
-            if last_key in available_voices and len(untried) > 1:
-                start_idx = (available_voices.index(last_key) + 1) % len(available_voices)
-                rotated_order = available_voices[start_idx:] + available_voices[:start_idx]
-                for v in rotated_order:
-                    if v in untried:
-                        return v
-            return untried[0]
-
-        # Phase 2: Exploitation (70%) vs Exploration (30%)
-        best_voice = max(
-            available_voices,
-            key=lambda v: (
-                float(voice_perf.get(v, {}).get("weight", 1.0)),
-                float(voice_perf.get(v, {}).get("avg_engagement", 0.0)),
-            ),
-        )
-        if random.random() < 0.70:
-            return best_voice
-
-        alternatives = [v for v in available_voices if v != best_voice]
-        return self._next_in_rotation(alternatives, last_key, best_voice)
+        # Pick candidate with the minimum usage count in memory for fair, uniform distribution
+        candidates.sort(key=lambda v: (int(voice_perf.get(v, {}).get("count", 0)), v))
+        return candidates[0]
 
     def _sort_formats_by_memory(
         self,
@@ -416,12 +468,13 @@ class CentralBrain:
         lines = [
             f"توجيهات العقل المركزي (الساعة {hour_ye:02d}:00 بتوقيت اليمن — {window_label}):",
             f"- الحالة: {plan['decision']} | الحد الأدنى لدرجة الأهمية: {plan['min_importance_score']}/100",
-            f"- الصيغ المسموحة حسب الأولوية: [{formats_str}]",
+            f"- الصيغ المسموحة حصراً لهذه الجولة: [{formats_str}]",
             (
-                f"- استهلاك اليوم: الريلز {counts['total_reels']}/{caps['max_daily_reels']} | "
-                f"البطاقات {counts['photo_card']}/{caps['max_daily_photos']} | "
-                f"النصوص الساخرة {counts['text_satire']}/{caps['max_daily_text_satire']} | "
-                f"ترند اليمن {counts['yemen_trend_count']}/{caps['max_daily_yemen_trends']}"
+                f"- استهلاك اليوم: ريلز عادي {counts.get('standard_reel', 0)}/{caps.get('max_daily_standard_reels', 3)} | "
+                f"ريلز خريطة {counts.get('map_reel', 0)}/{caps.get('max_daily_map_reels', 3)} | "
+                f"بطاقات {counts.get('photo_card', 0)}/{caps.get('max_daily_photos', 16)} | "
+                f"ساخر {counts.get('text_satire', 0)}/{caps.get('max_daily_text_satire', 1)} | "
+                f"ترند اليمن {counts.get('yemen_trend_count', 0)}/{caps.get('max_daily_yemen_trends', 4)}"
             ),
             f"- نطاق التغطية: {yemen_note}",
             f"- الصوت المقترح للريلز: {plan['preferred_voice']}",
@@ -430,13 +483,15 @@ class CentralBrain:
         return "\n".join(lines)
 
     def plan_hourly_run(self, now: Optional[datetime] = None) -> Dict[str, Any]:
-        """Evaluate Yemen local time, daily quotas, and learned weights to plan the run."""
+        """Evaluate Yemen local time, daily quotas, strict format alternation, and learned weights."""
         memory = self.load_memory()
         caps = memory.get("daily_caps", DEFAULT_DAILY_CAPS)
-        max_reels = int(caps.get("max_daily_reels", 4))
-        max_photos = int(caps.get("max_daily_photos", 10))
-        max_satire = int(caps.get("max_daily_text_satire", 8))
-        max_yemen = int(caps.get("max_daily_yemen_trends", 2))
+        max_reels = int(caps.get("max_daily_reels", 6))
+        max_std_reels = int(caps.get("max_daily_standard_reels", 3))
+        max_map_reels = int(caps.get("max_daily_map_reels", 3))
+        max_photos = int(caps.get("max_daily_photos", 16))
+        max_satire = int(caps.get("max_daily_text_satire", 1))
+        max_yemen = int(caps.get("max_daily_yemen_trends", 4))
 
         now_ye = (now or datetime.now(YEMEN_TZ)).astimezone(YEMEN_TZ)
         hour = now_ye.hour
@@ -444,17 +499,29 @@ class CentralBrain:
         is_quiet_hour = hour in QUIET_HOURS
 
         today_counts = get_today_publish_counts(self.history_path)
+        cards_today = int(today_counts.get("photo_card", 0))
+        std_reels_today = int(today_counts.get("standard_reel", 0))
+        map_reels_today = int(today_counts.get("map_reel", 0))
+        satire_today = int(today_counts.get("text_satire", 0))
+        total_reels_today = int(today_counts.get("total_reels", 0))
+        yemen_today = int(today_counts.get("yemen_trend_count", 0))
+
         remaining_quotas = {
-            "reels_remaining": max(0, max_reels - today_counts["total_reels"]),
-            "photos_remaining": max(0, max_photos - today_counts["photo_card"]),
-            "text_satire_remaining": max(0, max_satire - today_counts["text_satire"]),
-            "yemen_trends_remaining": max(0, max_yemen - today_counts["yemen_trend_count"]),
+            "reels_remaining": max(0, max_reels - total_reels_today),
+            "standard_reels_remaining": max(0, max_std_reels - std_reels_today),
+            "map_reels_remaining": max(0, max_map_reels - map_reels_today),
+            "photos_remaining": max(0, max_photos - cards_today),
+            "text_satire_remaining": max(0, max_satire - satire_today),
+            "yemen_trends_remaining": max(0, max_yemen - yemen_today),
         }
 
-        reels_rem = remaining_quotas["reels_remaining"]
         photos_rem = remaining_quotas["photos_remaining"]
+        std_reels_rem = remaining_quotas["standard_reels_remaining"]
+        map_reels_rem = remaining_quotas["map_reels_remaining"]
         satire_rem = remaining_quotas["text_satire_remaining"]
         yemen_rem = remaining_quotas["yemen_trends_remaining"]
+
+        last_post_type, last_video_type = self._read_recent_history_context()
 
         allowed_formats: List[str] = []
         allow_urgent_override = False
@@ -463,40 +530,81 @@ class CentralBrain:
             # Dawn quiet hours (02:00-05:59): skip routine publishing; allow urgent >= 85 only
             if photos_rem > 0:
                 allowed_formats.append("photo_card")
-            if reels_rem > 0:
+            if std_reels_rem > 0:
                 allowed_formats.append("standard_reel")
             should_run = False
             allow_urgent_override = len(allowed_formats) > 0
             decision = "URGENT_ONLY" if allow_urgent_override else "SKIP"
             min_importance_score = 85
             allow_yemen_trend = False
-        elif is_peak_hour and reels_rem > 0:
-            # Peak hours with remaining reel budget: prioritize video reels first
-            reel_tier = self._sort_formats_by_memory(["standard_reel", "map_reel"], memory)
-            secondary_tier: List[str] = []
-            if photos_rem > 0:
-                secondary_tier.append("photo_card")
-            if satire_rem > 0:
-                secondary_tier.append("text_satire")
-            secondary_tier = self._sort_formats_by_memory(secondary_tier, memory)
-            allowed_formats = reel_tier + secondary_tier
-            should_run = True
-            decision = "PUBLISH"
-            min_importance_score = 55
-            allow_yemen_trend = yemen_rem > 0
         else:
-            # Off-peak hours OR daily reel cap reached: focus on photo_card & text_satire
-            non_reel: List[str] = []
-            if photos_rem > 0:
-                non_reel.append("photo_card")
-            if satire_rem > 0:
-                non_reel.append("text_satire")
-            if reels_rem > 0:
-                non_reel.append("standard_reel")
-            allowed_formats = self._sort_formats_by_memory(non_reel, memory)
+            # Check Rule A: Mandatory Photo Cards rule (min_daily_photos = 3)
+            force_photo_card = False
+            if cards_today < 3 and photos_rem > 0:
+                if (
+                    not is_peak_hour
+                    or last_post_type in ("standard_reel", "map_reel")
+                    or (hour >= 15 and cards_today < 1)
+                    or (hour >= 18 and cards_today < 2)
+                    or (hour >= 21 and cards_today < 3)
+                ):
+                    force_photo_card = True
+
+            if force_photo_card:
+                allowed_formats = ["photo_card"]
+            else:
+                # Video rotation: strict alternation between standard_reel and map_reel
+                allowed_video: Optional[str] = None
+                if last_video_type == "map_reel" or map_reels_rem <= 0:
+                    # After map_reel (or if map_reels exhausted), standard_reel is the ONLY video option
+                    if std_reels_rem > 0 and last_post_type != "standard_reel":
+                        allowed_video = "standard_reel"
+                else:
+                    # After standard_reel (or initial), map_reel is preferred
+                    if map_reels_rem > 0 and last_post_type != "map_reel":
+                        allowed_video = "map_reel"
+                    elif std_reels_rem > 0 and last_post_type != "standard_reel":
+                        allowed_video = "standard_reel"
+
+                # Check text_satire rule: max 1/day, only between 17:00 and 21:00 Yemen time
+                allow_satire_now = (
+                    satire_rem > 0
+                    and (17 <= hour <= 21)
+                    and last_post_type != "text_satire"
+                )
+
+                candidate_formats: List[str] = []
+                if is_peak_hour:
+                    # During peak hours, prioritize video if available, then photo_card, then satire
+                    if allowed_video:
+                        candidate_formats.append(allowed_video)
+                    if photos_rem > 0 and last_post_type != "photo_card":
+                        candidate_formats.append("photo_card")
+                    if allow_satire_now:
+                        candidate_formats.append("text_satire")
+                else:
+                    # During off-peak hours, focus on photo_card, then video if allowed
+                    if photos_rem > 0 and last_post_type != "photo_card":
+                        candidate_formats.append("photo_card")
+                    if allowed_video:
+                        candidate_formats.append(allowed_video)
+                    if allow_satire_now:
+                        candidate_formats.append("text_satire")
+
+                # Fallback if strict anti-repeat filtered everything out
+                if not candidate_formats:
+                    if photos_rem > 0:
+                        candidate_formats.append("photo_card")
+                    elif std_reels_rem > 0:
+                        candidate_formats.append("standard_reel")
+                    elif map_reels_rem > 0:
+                        candidate_formats.append("map_reel")
+
+                allowed_formats = candidate_formats
+
             should_run = len(allowed_formats) > 0
             decision = "PUBLISH" if should_run else "SKIP"
-            min_importance_score = 50
+            min_importance_score = 55 if is_peak_hour else 50
             allow_yemen_trend = yemen_rem > 0 and should_run
 
         top_fmt = self._top_performer(memory.get("format_performance", {}))

@@ -320,14 +320,10 @@ def _dispatch_selected_post(
 
 
 def _resolve_max_selections(run_plan: Dict[str, Any], max_posts: Optional[int]) -> int:
-    """Select 2 posts (Visual post + mandatory Satire post) during normal runs; 1 during quiet hours."""
+    """Always select exactly 1 post per hourly run to ensure content variety throughout the day."""
     if max_posts is not None:
-        return max(0, int(max_posts))
-
-    if run_plan.get("is_quiet_hour"):
-        return 1
-
-    return 2
+        return max(0, min(1, int(max_posts)))
+    return 1
 
 
 def run_pipeline(

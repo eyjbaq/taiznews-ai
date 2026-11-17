@@ -214,6 +214,30 @@ def _get_next_voice() -> tuple[str, str, str]:
     return chosen["voice_id"], chosen["name"], chosen["gender"]
 
 
+def _get_next_edge_fallback_voice(exclude_keys: Optional[set[str]] = None) -> dict[str, Any]:
+    """Return the next Edge-TTS voice in rotation based on voice_state.json, avoiding excluded keys.
+
+    Rotates fairly across the four Edge-TTS voices (saleh, ali, zariyah, maryam) without fixed trapping.
+    """
+    state = _read_voice_state()
+    voice_by_id = {v["id"]: v for v in VOICE_ROTATION_LIST if v["engine"] == "edge"}
+    edge_keys = ["saleh", "ali", "zariyah", "maryam"]
+    last_key = str(state.get("last_voice_key") or "").strip().lower()
+
+    if last_key in edge_keys:
+        start_idx = (edge_keys.index(last_key) + 1) % len(edge_keys)
+    else:
+        last_rot_idx = int(state.get("last_voice_rotation_index", 0))
+        start_idx = (last_rot_idx + 1) % len(edge_keys)
+
+    rotated = edge_keys[start_idx:] + edge_keys[:start_idx]
+    excluded = exclude_keys or set()
+    for k in rotated:
+        if k not in excluded and k in voice_by_id:
+            return dict(voice_by_id[k])
+    return dict(voice_by_id.get(edge_keys[0], VOICE_ROTATION_LIST[0]))
+
+
 def _clean_word_for_subtitles(word: str) -> str:
     """Remove Arabic diacritics (tashkeel) and punctuation from a word."""
     cleaned = re.sub(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]", "", word)
@@ -692,8 +716,7 @@ def _prepare_vocalized_text(text: str) -> str:
     """Clean and prepare Arabic text with ASR safety and full vocalization for broadcast TTS."""
     if not text:
         return ""
-    clean = sanitize_for_tts_audio(text)
-    clean = clean.strip()
+    clean = text.strip()
     clean = re.sub(r"#\S+", "", clean)
     clean = re.sub(r"https?://\S+", "", clean)
     clean = re.sub(
@@ -709,6 +732,8 @@ def _prepare_vocalized_text(text: str) -> str:
     clean = re.sub(r"بحسب [^\s،.]+( [^\s،.]+)?", "", clean)
     clean = re.sub(r"وفقا[ً]? ل[^\s،.]+( [^\s،.]+)?", "", clean)
     clean = re.sub(r"\s+", " ", clean).strip()
+    # Final step: sanitize sensitive military/political terms for broadcast TTS
+    clean = sanitize_for_tts_audio(clean)
     return clean
 
 
@@ -730,6 +755,8 @@ def _prepare_unvocalized_text(text: str) -> str:
     clean = re.sub(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]", "", clean)
     clean = clean.replace("___PROTECTED_TAIZ___", "تَعِز")
     clean = re.sub(r"\s+", " ", clean).strip()
+    # Final step: ensure sensitive terms are sanitized
+    clean = sanitize_for_tts_audio(clean)
     return clean
 
 
@@ -815,6 +842,8 @@ def generate_news_audio(
             return False, []
 
     # 1. Primary execution
+    attempted_edge_voices: set[str] = set()
+
     if target_engine == "elevenlabs" and _is_elevenlabs_ready():
         print(f"🎙️ جاري توليد التعليق الصوتي عبر محرك ElevenLabs API ({ELEVENLABS_MODEL_ID})...")
         success, word_timestamps, _ = _generate_tts_elevenlabs(
@@ -823,8 +852,9 @@ def generate_news_audio(
             voice_id=target_voice_id,
         )
         if not success or not output_file.exists() or output_file.stat().st_size < 1000:
-            print("🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs، الانتقال الفوري للبديل مريم اليمنية (Edge-TTS)...")
-            actual_voice_info = dict(voice_by_id["maryam"])
+            next_edge = _get_next_edge_fallback_voice()
+            print(f"🔄 [التبديل التلقائي] تعذر التوليد عبر ElevenLabs، الانتقال للبديل {next_edge['name']} (Edge-TTS)...")
+            actual_voice_info = dict(next_edge)
             target_engine = "edge"
             raw_vocalized = vocalized_fallback_text or text
             narration_text = _prepare_vocalized_text(raw_vocalized)
@@ -832,14 +862,17 @@ def generate_news_audio(
     if target_engine == "edge" or not success:
         raw_vocalized = vocalized_fallback_text or text
         edge_text = _prepare_vocalized_text(raw_vocalized)
+        attempted_edge_voices.add(actual_voice_info["id"])
         success, word_timestamps = _run_edge_with_voice(actual_voice_info, edge_text)
 
-        if (not success or not output_file.exists() or output_file.stat().st_size < 1000) and actual_voice_info["id"] != "maryam":
-            print(f"🔄 [التبديل الاحتياطي] تعذر صوت {actual_voice_info['name']}، التبديل إلى مريم اليمنية (Edge-TTS)...")
-            actual_voice_info = dict(voice_by_id["maryam"])
+        while (not success or not output_file.exists() or output_file.stat().st_size < 1000) and len(attempted_edge_voices) < 4:
+            next_edge = _get_next_edge_fallback_voice(exclude_keys=attempted_edge_voices)
+            print(f"🔄 [التبديل الاحتياطي] تعذر صوت {actual_voice_info['name']}، التبديل إلى {next_edge['name']} (Edge-TTS)...")
+            actual_voice_info = dict(next_edge)
+            attempted_edge_voices.add(actual_voice_info["id"])
             success, word_timestamps = _run_edge_with_voice(actual_voice_info, edge_text)
 
-        if (not success or not output_file.exists() or output_file.stat().st_size < 1000) and _is_elevenlabs_ready():
+        if (not success or not output_file.exists() or output_file.stat().st_size < 1000) and _is_elevenlabs_ready() and target_engine != "elevenlabs":
             print("🔄 [التبديل الاحتياطي] تعذر توليد Edge-TTS، التبديل إلى ElevenLabs بصوت آدم...")
             actual_voice_info = dict(voice_by_id["adam"])
             unvoc_text = _prepare_unvocalized_text(text)

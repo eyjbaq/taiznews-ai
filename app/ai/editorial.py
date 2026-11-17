@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import warnings
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
@@ -40,6 +41,21 @@ EDITORIAL_SYSTEM_PROMPT = """أنت رئيس التحرير والمخرج ال�
 4. الدخول المباشر في صلب الخبر (Direct News Delivery — ممنوع الإسناد اللفظي):
    - ممنوع منعاً باتاً ذكر عبارات مثل "نقلاً عن..." أو "بحسب..." أو "وفقاً لـ..." أو ذكر أسماء المواقع أو المصادر داخل متن الخبر (clean_content و vocalized_content) أو العنوان نهائياً.
    - ادخل في الحدث والوقائع مباشرة بصياغة صحفية رصينة وقوية (مثال: "اندلعت اشتباكات عنيفة..." بدلاً من "أفادت مصادر نقلاً عن...").
+
+══════════════════════════════════════════════════════════════════════
+قاعدة حظر الكلمات الحساسة والالتزام بالبدائل الإذاعية النظيفة (CRITICAL SAFETY):
+══════════════════════════════════════════════════════════════════════
+يُمنع منعاً باتاً استخدام الكلمات العسكرية والسياسية الحساسة داخل العنوان أو المتن لتفادي تقييد وصول الصفحة وحظرها:
+- ممنوع: (مليشيا الحوثي / ميليشيا الحوثي / الحوثيين / الحوثيون) -> استخدم بدلاً منها: (مسلحو الجماعة / مسلحي الجماعة / قوات الجماعة / الجماعة).
+- ممنوع: (مقتل / مصرع) -> استخدم بدلاً منها: (سقوط).
+- ممنوع: (قتلى / قتيل) -> استخدم بدلاً منها: (ضحايا / ضحية).
+- ممنوع: (غارات / غارة) -> استخدم بدلاً منها: (ضربات / ضربة / ضربات جوية).
+- ممنوع: (قصف) -> استخدم بدلاً منها: (استهداف).
+- ممنوع: (انفجار / انفجارات) -> استخدم بدلاً منها: (دوي / حادث ميداني).
+- ممنوع: (اغتيال) -> استخدم بدلاً منها: (استهداف).
+- ممنوع: (انتحاري / إرهابي) -> استخدم بدلاً منها: (مهاجم / مسلح).
+- ممنوع: (قناص / قناصة) -> استخدم بدلاً منها: (مطلق نار / نيران مباشرة).
+- ممنوع: (مليشيا / ميليشيا / مليشيات) -> استخدم بدلاً منها: (تشكيلات مسلحة).
 
 ══════════════════════════════════════════════════════════════════════
 ضبط مدة الفيديو (Reel Duration):
@@ -117,7 +133,7 @@ MAX_RETRIES_PER_MODEL = 3
 T = TypeVar("T")
 
 BATCH_BRAIN_SYSTEM_PROMPT = """أنت رئيس التحرير التنفيذي وصاحب القلم الساخر لمنصة "تعز نيوز" (Taiz News).
-مهمتك في هذه الجولة فحص قائمة الأخبار المرشحة دفعة واحدة، وتنفيذ خطة العقل المركزي بدقة صارمة: عند توفر أخبار مؤهلة، قم باختيار وصياغة منشورين متميزين من خبرين مرشحين مختلفين تماماً (منشور مرئي رئيسي + منشور يمني ساخر إلزامي)، أو إعلان التخطي (SKIP) فقط في حال انعدام الأخبار المؤهلة أو تكرارها الكامل.
+مهمتك في هذه الجولة فحص قائمة الأخبار المرشحة دفعة واحدة، وتنفيذ خطة العقل المركزي بدقة صارمة: اختيار أفضل خبر واحد فقط وصياغته بالصيغة المحددة في الخطة حصراً (أو إعلان التخطي SKIP إذا لم تكن هناك أخبار مؤهلة جديدة).
 
 ══════════════════════════════════════════════════════════════════════
 القواعد الصارمة لاتخاذ القرار والتحرير (Central Brain Rules):
@@ -127,31 +143,46 @@ BATCH_BRAIN_SYSTEM_PROMPT = """أنت رئيس التحرير التنفيذي �
 - راجع الحد الأدنى للأهمية المطلوب في الخطة (min_importance_score).
 - إذا كانت جميع الأخبار المرشحة دون المستوى، أو روتينية مملة، أو مكررة لما نُشر سابقاً في سجل النشر الحديث، فاتخذ فوراً قرار:
   decision = "SKIP" مع كتابة سبب واضح في skip_reason وترك selected_posts فارغة [].
-- عندما تكون هناك أخبار مؤهلة و max_selections >= 2 مع توفر مرشحين فأكثر، يجب عليك إلزامياً اختيار وصياغة **منشورين مختلفين من خبرين مختلفين**:
-  * المنشور الأول: منشور مرئي رئيسي (standard_reel أو map_reel أو photo_card).
-  * المنشور الثاني: منشور يمني ساخر إلزامي (text_satire) يختار حدثاً خدمياً أو معيشياً أو سياسياً آخر.
+- عندما يتوفر خبر مؤهل، اختر منشوراً واحداً فقط كحد أقصى (max_selections = 1).
 
 2) قاعدة ترند اليمن (yemen_trend) وأولوية تعز:
 - الأولوية الدائمة لأخبار تعز (scope == "taiz") إذا تقاربت الأهمية الصحفية.
-- يُسمح باختيار خبر واحد فقط كحد أقصى من نطاق yemen_trend (وفقط إذا كانت allow_yemen_trend = True في الخطة)، وبشرط أن يكون حدثاً يمنياً كبيراً يهم عموم اليمنيين (اقتصاد، عملة، خدمات كبرى، قرار مصيري، حدث أمني/سياسي كبير).
+- يُسمح باختيار خبر واحد فقط من نطاق yemen_trend وفقط إذا كانت allow_yemen_trend = True في الخطة وبشرط أن يكون حدثاً يمنياً كبيراً عاماً (اقتصاد، عملة، خدمات كبرى، قرار مصيري).
 - ممنوع منعاً باتاً اختيار صيغة "map_reel" لأي خبر نطاقه yemen_trend لأن الخريطة التفاعلية مخصصة حصراً لمديريات محافظة تعز.
 
-3) اختيار الصيغة وتوزيع المنشورين (chosen_format حصراً من قائمة allowed_formats):
-عند اختيار منشورين (max_selections >= 2)، وزع الصيغتين كالتالي:
-- المنشور 1 (المرئي الرئيسي): اختر الصيغة الأنسب من بين ("standard_reel" أو "map_reel" أو "photo_card"):
-  * "map_reel" (للأحداث الميدانية/الأمنية/الخدمية بتعز المحددة جغرافياً بمديرية معينة): املأ district_name و map_label و hook_text و location_chip_text و image_prompts_en.
-  * "standard_reel" (للأخبار الدرامية ذات القصة البصرية القوية في تعز أو ترند اليمن): املأ headline و clean_content و vocalized_content و 5 مشاهد في image_prompts_en بالإنجليزية خالية من النصوص.
-  * "photo_card" (بطاقة إخبارية مصورة عاجلة وسريعة): املأ headline و clean_content و image_prompt_en (وصف مشهد واقعي بالإنجليزية لتوليد خلفية بالذكاء الاصطناعي 100% دون نصوص داخل الصورة).
-- المنشور 2 (المنشور اليمني الساخر الإلزامي): اختر "text_satire" لخبر مرشح آخر مختلف.
+3) اختيار الصيغة الإلزامي (chosen_format حصراً من قائمة allowed_formats في الخطة):
+يجب أن يكون حقل chosen_format للمنشور المختار موجوداً نصياً داخل allowed_formats المحددة في توجيهات الجولة:
+- "map_reel" (للأحداث الميدانية/الأمنية/الخدمية بتعز المحددة جغرافياً بمديرية معينة):
+  املأ district_name من المديريات المعتمدة، map_label، hook_text، location_chip_text، و 4-5 مشاهد في image_prompts_en بالإنجليزية.
+- "standard_reel" (للأخبار الدرامية ذات القصة البصرية القوية في تعز أو ترند اليمن):
+  املأ headline و clean_content و vocalized_content و 5 مشاهد في image_prompts_en بالإنجليزية خالية تماماً من النصوص.
+- "photo_card" (بطاقة إخبارية مصورة عاجلة وسريعة):
+  املأ headline و clean_content و image_prompt_en (وصف مشهد واقعي بالإنجليزية لتوليد خلفية بالذكاء الاصطناعي 100% دون نصوص داخل الصورة).
+- "text_satire" (منشور نصي خالص بشخصية الكاتب الساخر):
+  يُختار فقط عندما تكون صيغة "text_satire" مدرجة في allowed_formats.
 
 4) هندسة شخصية "الكاتب السياسي اليمني الساخر" (عند اختيار chosen_format == "text_satire"):
-- اكتب المنشور في حقل satirical_text (وكرره مطابقاً في clean_content و body) بطول مكثف من 35 إلى 65 كلمة.
-- الأسلوب: نقد سياسي واجتماعي يمني ساخر وذكي جداً (كوميديا سوداء راقية بروح الشارع التعزي واليمني)، يمزج العربية السلسة بلمسات أصيلة من اللهجة اليمنية/التعزية المفهومة للجميع (مثل: "يا جماعة الخير"، "ما شاء الله تبارك الله"، "المواطن المسكين"، "أبشروا بالخير"، "خبر يثلج الصدر في عز الحر"، "يعني بالعربي...") دون شتائم، بل سخرية لاذعة تضع اليد على الجرح وتجعل القارئ يتفاعل ويبتسم ويشارك المنشور فوراً.
-- الخطاف التفاعلي الإلزامي: اختم المنشور الساخر دائماً بسؤال ذكي قصير ومستفز يفتح باب النقاش والتعليقات (مثل: "إيش رأيكم يا خبرة؟"، "تتوقعوا متى بيوصلنا الدور؟"، "شاركونا آرائكم في التعليقات!") مع 3 وسوم فقط في hashtags.
+- اكتب المنشور في حقل satirical_text (وكرره في clean_content و body) بطول مكثف من 25 إلى 45 كلمة فقط!
+- ممنوع منعاً باتاً الكليشيهات والعبارات المستهلكة المكررة نهائياً: يُمنع قول "يا جماعة الخير"، أو "المواطن المسكين"، أو "أبشروا بالخير"، أو "الضوء في آخر النفق".
+- الأسلوب المطلوب: نكتة شارع تعزية ذكية ومباغتة، أو مفارقة ساخرة لاذعة بين وعود المسؤولين والواقع المعاش، بأسلوب كوميديا سوداء راقية وخاطفة تجعل القارئ يبتسم ويشارك المنشور فوراً.
+- الخطاف التفاعلي: اختم المنشور الساخر بسؤال ذكي قصير مستفز للتعليقات، مع 3 وسوم فقط في hashtags.
 
-5) قواعد النزاهة الصحفية وحقول الإخراج المطلوبة:
+5) حظر الكلمات الحساسة والالتزام بالبدائل الإذاعية الرصينة (CRITICAL SAFETY):
+يُمنع منعاً باتاً استخدام الكلمات التالية داخل العنوان أو المتن أو النص الصوتي لحماية الصفحة من الحظر:
+- (مليشيا الحوثي / الحوثيين) -> استبدلها بـ: (مسلحو الجماعة / مسلحي الجماعة / قوات الجماعة / الجماعة).
+- (مقتل / مصرع) -> استبدلها بـ: (سقوط).
+- (قتلى / قتيل) -> استبدلها بـ: (ضحايا / ضحية).
+- (غارات / غارة) -> استبدلها بـ: (ضربات / ضربة / ضربات جوية).
+- (قصف) -> استبدلها بـ: (استهداف).
+- (انفجار / انفجارات) -> استبدلها بـ: (دوي / حادث ميداني).
+- (اغتيال) -> استبدلها بـ: (استهداف).
+- (انتحاري / إرهابي) -> استبدلها بـ: (مهاجم / مسلح).
+- (قناص / قناصة) -> استبدلها بـ: (مطلق نار / نيران مباشرة).
+- (مليشيا / ميليشيا) -> استبدلها بـ: (تشكيلات مسلحة).
+
+6) قواعد النزاهة الصحفية وحقول الإخراج:
 - لا تختلق أي أرقام أو أسماء غير واردة في نص المرشح.
-- لكل عنصر في selected_posts تأكد من تعبئة الحقول بدقة: candidate_index (1-based)، scope (`taiz` أو `yemen_trend` مطابقاً للمرشح)، is_relevant_to_taiz (`true` لأخبار تعز)، importance_score (من **1 إلى 100**)، should_publish (`true`)، source_attribution، category، headline، clean_content، و hashtags."""
+- لكل عنصر في selected_posts تأكد من تعبئة: candidate_index (1-based)، scope، is_relevant_to_taiz، importance_score (من 1 إلى 100)، should_publish (true)، source_attribution، category، headline، clean_content، و hashtags."""
 
 
 def _generate_structured_with_fallback(
@@ -344,11 +375,7 @@ def _build_batch_prompt(
     history_block = (recent_posts_context or "").strip() or "لا توجد منشورات حديثة مسجلة."
     districts_line = "، ".join(supported_districts)
 
-    selections_rule = (
-        f"- العدد المطلوب اختياره (max_selections): {max_selections} (إلزامي عند توفر أكثر من مرشح: منشور 1 مرئي [photo_card أو reel] + منشور 2 ساخر [text_satire] من خبرين مرشحين مختلفين تماماً)."
-        if max_selections >= 2 and len(indexed_candidates) >= 2
-        else f"- الحد الأقصى لعدد المنشورات المختارة (max_selections): {max_selections}"
-    )
+    selections_rule = f"- الحد الأقصى لعدد المنشورات المختارة (max_selections): {max_selections} (اختر أفضل خبر واحد فقط بالصيغة المسموحة)"
 
     return (
         "═══ خطة العقل المركزي لهذه الجولة ═══\n"
@@ -365,7 +392,7 @@ def _build_batch_prompt(
         "═══ قائمة الأخبار المرشحة للمفاضلة والتحرير ═══\n"
         + "\n\n---\n\n".join(candidate_blocks)
         + "\n\nالمطلوب: أعد كائن JSON متوافقاً مع BatchEditorialResponse يحدد decision (PUBLISH أو SKIP)، "
-        "وعند قرار PUBLISH قم بصياغة منشورين متميزين من خبرين مختلفين (المنشور 1 بصيغة مرئية مع أوصاف صور بالإنجليزية، والمنشور 2 بصيغة text_satire مع سؤال تفاعلي)."
+        "وعند قرار PUBLISH قم باختيار وصياغة منشور واحد فقط ملتزماً بإحدى الصيغ المذكورة في allowed_formats حصراً."
     )
 
 
@@ -407,7 +434,7 @@ def _normalize_batch_response(
             if not allow_yemen_trend or yemen_count >= 1:
                 continue
 
-        # Enforce format within allowed_formats and restrict map_reel to taiz only
+        # Enforce format strictly within allowed_formats and restrict map_reel to taiz only
         chosen_fmt = (post.chosen_format or "").strip()
         non_map_allowed = [f for f in allowed_formats if f != "map_reel"]
 
@@ -417,7 +444,7 @@ def _normalize_batch_response(
             elif non_map_allowed:
                 chosen_fmt = non_map_allowed[0]
             else:
-                continue
+                chosen_fmt = allowed_formats[0] if allowed_formats else "photo_card"
 
         if chosen_fmt == "map_reel" and true_scope != "taiz":
             if non_map_allowed:
@@ -426,7 +453,7 @@ def _normalize_batch_response(
                     non_map_allowed[0],
                 )
             else:
-                continue
+                chosen_fmt = allowed_formats[0] if allowed_formats else "photo_card"
 
         post.scope = true_scope
         post.is_relevant_to_taiz = true_scope == "taiz"
@@ -436,16 +463,33 @@ def _normalize_batch_response(
             src = getattr(source_article, "source", "") or "مصادر محلية"
             post.source_attribution = f"نقلاً عن {src}"
 
-        if chosen_fmt == "map_reel":
+        if chosen_fmt == "photo_card":
+            if not post.image_prompt_en:
+                clean_t = post.headline or source_article.title
+                post.image_prompt_en = (
+                    f"Dramatic realistic news photo in Taiz Yemen related to {clean_t}, "
+                    "AP photojournalism, cinematic lighting, natural daylight"
+                )
+        elif chosen_fmt == "map_reel":
             if post.district_name not in supported_districts:
                 post.district_name = "مدينة تعز"
             if not post.location_chip_text:
                 post.location_chip_text = post.district_name
         elif chosen_fmt == "text_satire":
             sat_text = (post.satirical_text or post.clean_content or post.body or "").strip()
-            # Ensure interactive question ending exists for comment engagement
+            # Clean banned repetitive clichés
+            for cliche in (
+                "يا جماعة الخير",
+                "المواطن المسكين",
+                "ابشروا بالخير",
+                "أبشروا بالخير",
+                "الضوء في آخر النفق",
+                "الضوء في اخر النفق",
+            ):
+                sat_text = re.sub(re.escape(cliche), "", sat_text).strip()
+            sat_text = re.sub(r"\s+", " ", sat_text).strip()
             if not any(q in sat_text for q in ("؟", "?", "رايكم", "رأيكم", "شاركنا", "شاركونا")):
-                sat_text = f"{sat_text}\n\n💬 كيف ترون هذه التطورات؟ شاركونا في التعليقات."
+                sat_text = f"{sat_text}\n\n💬 كيف ترون هذا التطور؟ شاركونا في التعليقات."
             post.satirical_text = sat_text
             post.clean_content = sat_text
             post.body = sat_text
@@ -466,21 +510,7 @@ def _normalize_batch_response(
             selected_posts=[],
         )
 
-    # Order posts so the visual post publishes first and text_satire schedules second
-    if len(valid_posts) > 1:
-        visual_posts = [p for p in valid_posts if p.chosen_format != "text_satire"]
-        satire_posts = [p for p in valid_posts if p.chosen_format == "text_satire"]
-        ordered_posts: List[EditorialPost] = []
-        if visual_posts:
-            ordered_posts.append(visual_posts[0])
-        if satire_posts:
-            ordered_posts.append(satire_posts[0])
-        for p in valid_posts:
-            if p not in ordered_posts and len(ordered_posts) < max_selections:
-                ordered_posts.append(p)
-        valid_posts = ordered_posts[:max_selections]
-
-    return BatchEditorialResponse(decision="PUBLISH", skip_reason="", selected_posts=valid_posts)
+    return BatchEditorialResponse(decision="PUBLISH", skip_reason="", selected_posts=valid_posts[:max_selections])
 
 
 def evaluate_and_draft_batch(
@@ -488,7 +518,7 @@ def evaluate_and_draft_batch(
     yemen_candidates: List[Article],
     run_plan: Dict[str, Any],
     recent_posts_context: Optional[str] = None,
-    max_selections: int = 2,
+    max_selections: int = 1,
     client: Optional[genai.Client] = None,
     model_name: Optional[str] = None,
 ) -> Optional[BatchEditorialResponse]:
