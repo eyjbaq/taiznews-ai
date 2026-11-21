@@ -1,9 +1,9 @@
 {
   "version": 2,
   "created_at": "2026-11-11T02:54:03.124238+00:00",
-  "updated_at": "2026-11-21T09:30:59.313052+00:00",
-  "last_sync_at": "2026-11-21T09:30:56.577733+00:00",
-  "total_posts_analyzed": 6,
+  "updated_at": "2026-11-21T11:01:09.095451+00:00",
+  "last_sync_at": "2026-11-21T11:01:07.932632+00:00",
+  "total_posts_analyzed": 7,
   "daily_caps": {
     "max_daily_reels": 6,
     "max_daily_standard_reels": 3,
@@ -32,9 +32,9 @@
       "weight": 1.25
     },
     "map_reel": {
-      "count": 3,
-      "total_engagement": 25,
-      "avg_engagement": 8.67,
+      "count": 4,
+      "total_engagement": 27,
+      "avg_engagement": 6.34,
       "weight": 0.75
     }
   },
@@ -46,9 +46,9 @@
       "weight": 1.0
     },
     "أمن": {
-      "count": 6,
-      "total_engagement": 117,
-      "avg_engagement": 8.57,
+      "count": 7,
+      "total_engagement": 119,
+      "avg_engagement": 6.27,
       "weight": 1.0
     },
     "خدمات": {
@@ -84,9 +84,9 @@
       "weight": 1.0
     },
     "maryam": {
-      "count": 2,
-      "total_engagement": 21,
-      "avg_engagement": 10.43,
+      "count": 3,
+      "total_engagement": 23,
+      "avg_engagement": 7.48,
       "weight": 0.75
     },
     "saleh": {
@@ -204,7 +204,13 @@
       "total_engagement": 3,
       "avg_engagement": 3.0,
       "weight": 1.0
+    },
+    "11": {
+      "count": 1,
+      "total_engagement": 2,
+      "avg_engagement": 2.0,
+      "weight": 1.0
     }
   },
-  "learnings_summary": "تم تحليل 6 منشوراً | أفضل صيغة: standard_reel (متوسط 18.0) | أعلى تصنيف تفاعلاً: أمن (8.6) | أفضل صوت: saleh (62.4)"
+  "learnings_summary": "تم تحليل 7 منشوراً | أفضل صيغة: standard_reel (متوسط 18.0) | أعلى تصنيف تفاعلاً: أمن (6.3) | أفضل صوت: saleh (62.4)"
 }
