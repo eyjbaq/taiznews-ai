@@ -1,8 +1,8 @@
 {
   "version": 2,
   "created_at": "2026-11-11T02:54:03.124238+00:00",
-  "updated_at": "2026-11-23T15:03:23.279379+00:00",
-  "last_sync_at": "2026-11-23T15:03:21.159219+00:00",
+  "updated_at": "2026-11-23T21:07:34.722746+00:00",
+  "last_sync_at": "2026-11-23T21:07:31.108958+00:00",
   "total_posts_analyzed": 12,
   "daily_caps": {
     "max_daily_reels": 6,
@@ -27,15 +27,15 @@
     },
     "standard_reel": {
       "count": 6,
-      "total_engagement": 127,
-      "avg_engagement": 9.35,
-      "weight": 0.817
+      "total_engagement": 128,
+      "avg_engagement": 7.83,
+      "weight": 0.75
     },
     "map_reel": {
       "count": 6,
       "total_engagement": 70,
       "avg_engagement": 13.55,
-      "weight": 1.183
+      "weight": 1.25
     }
   },
   "category_performance": {
@@ -47,8 +47,8 @@
     },
     "أمن": {
       "count": 10,
-      "total_engagement": 188,
-      "avg_engagement": 10.57,
+      "total_engagement": 189,
+      "avg_engagement": 8.62,
       "weight": 1.25
     },
     "خدمات": {
@@ -87,7 +87,7 @@
       "count": 4,
       "total_engagement": 52,
       "avg_engagement": 13.66,
-      "weight": 1.134
+      "weight": 1.143
     },
     "saleh": {
       "count": 3,
@@ -97,15 +97,15 @@
     },
     "ali": {
       "count": 4,
-      "total_engagement": 37,
-      "avg_engagement": 6.06,
+      "total_engagement": 38,
+      "avg_engagement": 5.69,
       "weight": 0.75
     },
     "zariyah": {
       "count": 1,
       "total_engagement": 22,
       "avg_engagement": 9.65,
-      "weight": 0.801
+      "weight": 0.807
     }
   },
   "hourly_engagement": {
@@ -213,10 +213,10 @@
     },
     "03": {
       "count": 1,
-      "total_engagement": 4,
-      "avg_engagement": 4.0,
+      "total_engagement": 5,
+      "avg_engagement": 4.35,
       "weight": 1.0
     }
   },
-  "learnings_summary": "تم تحليل 12 منشوراً | أفضل صيغة: map_reel (متوسط 13.6) | أعلى تصنيف تفاعلاً: أمن (10.6) | أفضل صوت: saleh (18.8)"
+  "learnings_summary": "تم تحليل 12 منشوراً | أفضل صيغة: map_reel (متوسط 13.6) | أعلى تصنيف تفاعلاً: أمن (8.6) | أفضل صوت: saleh (18.8)"
 }
