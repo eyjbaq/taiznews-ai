@@ -1,9 +1,9 @@
 {
   "version": 2,
   "created_at": "2026-11-11T02:54:03.124238+00:00",
-  "updated_at": "2026-11-23T21:07:34.722746+00:00",
-  "last_sync_at": "2026-11-23T21:07:31.108958+00:00",
-  "total_posts_analyzed": 12,
+  "updated_at": "2026-11-24T05:51:31.962432+00:00",
+  "last_sync_at": "2026-11-24T05:51:28.789397+00:00",
+  "total_posts_analyzed": 13,
   "daily_caps": {
     "max_daily_reels": 6,
     "max_daily_standard_reels": 3,
@@ -26,16 +26,16 @@
       "weight": 1.0
     },
     "standard_reel": {
-      "count": 6,
-      "total_engagement": 128,
-      "avg_engagement": 7.83,
-      "weight": 0.75
+      "count": 7,
+      "total_engagement": 142,
+      "avg_engagement": 8.24,
+      "weight": 0.756
     },
     "map_reel": {
       "count": 6,
       "total_engagement": 70,
       "avg_engagement": 13.55,
-      "weight": 1.25
+      "weight": 1.244
     }
   },
   "category_performance": {
@@ -46,9 +46,9 @@
       "weight": 1.0
     },
     "أمن": {
-      "count": 10,
-      "total_engagement": 189,
-      "avg_engagement": 8.62,
+      "count": 11,
+      "total_engagement": 203,
+      "avg_engagement": 8.57,
       "weight": 1.25
     },
     "خدمات": {
@@ -84,10 +84,10 @@
       "weight": 1.0
     },
     "maryam": {
-      "count": 4,
-      "total_engagement": 52,
-      "avg_engagement": 13.66,
-      "weight": 1.143
+      "count": 5,
+      "total_engagement": 66,
+      "avg_engagement": 13.78,
+      "weight": 1.156
     },
     "saleh": {
       "count": 3,
@@ -98,21 +98,21 @@
     "ali": {
       "count": 4,
       "total_engagement": 38,
-      "avg_engagement": 5.69,
+      "avg_engagement": 5.45,
       "weight": 0.75
     },
     "zariyah": {
       "count": 1,
       "total_engagement": 22,
       "avg_engagement": 9.65,
-      "weight": 0.807
+      "weight": 0.809
     }
   },
   "hourly_engagement": {
     "00": {
-      "count": 0,
-      "total_engagement": 1,
-      "avg_engagement": 3.15,
+      "count": 1,
+      "total_engagement": 15,
+      "avg_engagement": 14.0,
       "weight": 1.0
     },
     "06": {
@@ -214,9 +214,9 @@
     "03": {
       "count": 1,
       "total_engagement": 5,
-      "avg_engagement": 4.35,
+      "avg_engagement": 4.58,
       "weight": 1.0
     }
   },
-  "learnings_summary": "تم تحليل 12 منشوراً | أفضل صيغة: map_reel (متوسط 13.6) | أعلى تصنيف تفاعلاً: أمن (8.6) | أفضل صوت: saleh (18.8)"
+  "learnings_summary": "تم تحليل 13 منشوراً | أفضل صيغة: map_reel (متوسط 13.6) | أعلى تصنيف تفاعلاً: أمن (8.6) | أفضل صوت: saleh (18.8)"
 }
