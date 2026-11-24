@@ -1,8 +1,8 @@
 {
   "version": 2,
   "created_at": "2026-11-11T02:54:03.124238+00:00",
-  "updated_at": "2026-11-24T15:02:08.968500+00:00",
-  "last_sync_at": "2026-11-24T15:02:07.138714+00:00",
+  "updated_at": "2026-11-24T17:01:55.825634+00:00",
+  "last_sync_at": "2026-11-24T17:01:53.759526+00:00",
   "total_posts_analyzed": 14,
   "daily_caps": {
     "max_daily_reels": 6,
@@ -28,14 +28,14 @@
     "standard_reel": {
       "count": 7,
       "total_engagement": 146,
-      "avg_engagement": 11.66,
-      "weight": 1.05
+      "avg_engagement": 9.33,
+      "weight": 0.938
     },
     "map_reel": {
       "count": 7,
       "total_engagement": 75,
       "avg_engagement": 10.56,
-      "weight": 0.95
+      "weight": 1.062
     }
   },
   "category_performance": {
@@ -48,7 +48,7 @@
     "أمن": {
       "count": 12,
       "total_engagement": 212,
-      "avg_engagement": 9.47,
+      "avg_engagement": 7.91,
       "weight": 1.25
     },
     "خدمات": {
@@ -98,14 +98,14 @@
     "ali": {
       "count": 4,
       "total_engagement": 38,
-      "avg_engagement": 5.45,
+      "avg_engagement": 5.29,
       "weight": 0.75
     },
     "zariyah": {
       "count": 1,
       "total_engagement": 22,
       "avg_engagement": 9.65,
-      "weight": 0.871
+      "weight": 0.874
     }
   },
   "hourly_engagement": {
@@ -214,9 +214,9 @@
     "03": {
       "count": 1,
       "total_engagement": 5,
-      "avg_engagement": 4.58,
+      "avg_engagement": 4.73,
       "weight": 1.0
     }
   },
-  "learnings_summary": "تم تحليل 14 منشوراً | أفضل صيغة: standard_reel (متوسط 11.7) | أعلى تصنيف تفاعلاً: أمن (9.5) | أفضل صوت: maryam (15.3)"
+  "learnings_summary": "تم تحليل 14 منشوراً | أفضل صيغة: map_reel (متوسط 10.6) | أعلى تصنيف تفاعلاً: خدمات (8.3) | أفضل صوت: maryam (15.3)"
 }

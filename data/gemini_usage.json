@@ -19,7 +19,7 @@
     "usage_count": 0,
     "daily_limit": 20,
     "first_request_at": null,
-    "exhausted_at": "2026-11-23T15:06:40.491917+00:00",
+    "exhausted_at": "2026-11-24T17:05:34.934318+00:00",
     "exhausted_reason": "404 Model Not Found"
   },
   "gemini-3.5-flash-lite": {
@@ -57,14 +57,14 @@
     "usage_count": 0,
     "daily_limit": 500,
     "first_request_at": null,
-    "exhausted_at": "2026-11-23T15:06:40.581674+00:00",
+    "exhausted_at": "2026-11-24T17:05:35.055246+00:00",
     "exhausted_reason": "404 Model Not Found"
   },
   "gemini-2.0-flash": {
     "usage_count": 0,
     "daily_limit": 20,
     "first_request_at": null,
-    "exhausted_at": "2026-11-23T15:06:40.642725+00:00",
+    "exhausted_at": "2026-11-24T17:05:35.173991+00:00",
     "exhausted_reason": "404 Model Not Found"
   }
 }
