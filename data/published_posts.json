@@ -7,8 +7,13 @@
     "post_type": "map_reel",
     "voice_id": "saleh",
     "scope": "taiz",
-    "metrics": null,
-    "metrics_updated_at": null,
+    "metrics": {
+      "reactions": 5,
+      "comments": 0,
+      "shares": 0,
+      "engagement_score": 5
+    },
+    "metrics_updated_at": "2026-11-24T15:02:07.138714+00:00",
     "article_title": "التصعيد يتواصل في اليمن والأمم المتحدة تدعو لرفع القيود عن تعز",
     "article_url": "https://www.aljazeera.net/news/2026/11/24/%d8%aa%d9%88%d8%a7%d8%b5%d9%84-%d8%a7%d9%84%d8%aa%d8%b5%d8%b9%d9%8a%d8%af-%d9%81%d9%8a-%d8%a7%d9%84%d9%8a%d9%85%d9%86-%d9%88%d8%a7%d9%84%d8%a3%d9%85%d9%85-%d8%a7%d9%84%d9%85%d8%aa%d8%ad%d8%af%d8%a9?traffic_source=rss",
     "article_source": "الجزيرة (اليمن)",
