@@ -1,9 +1,9 @@
 {
   "version": 2,
   "created_at": "2026-11-11T02:54:03.124238+00:00",
-  "updated_at": "2026-11-26T11:01:08.804960+00:00",
-  "last_sync_at": "2026-11-26T11:01:07.076519+00:00",
-  "total_posts_analyzed": 15,
+  "updated_at": "2026-11-26T14:55:14.236489+00:00",
+  "last_sync_at": "2026-11-26T14:55:13.020284+00:00",
+  "total_posts_analyzed": 16,
   "daily_caps": {
     "max_daily_reels": 6,
     "max_daily_standard_reels": 3,
@@ -32,9 +32,9 @@
       "weight": 0.75
     },
     "map_reel": {
-      "count": 7,
-      "total_engagement": 154,
-      "avg_engagement": 51.62,
+      "count": 8,
+      "total_engagement": 159,
+      "avg_engagement": 35.3,
       "weight": 1.25
     }
   },
@@ -46,16 +46,16 @@
       "weight": 1.0
     },
     "أمن": {
-      "count": 12,
-      "total_engagement": 301,
-      "avg_engagement": 50.49,
+      "count": 13,
+      "total_engagement": 306,
+      "avg_engagement": 34.57,
       "weight": 1.25
     },
     "خدمات": {
       "count": 1,
       "total_engagement": 9,
       "avg_engagement": 8.35,
-      "weight": 0.75
+      "weight": 0.76
     },
     "اقتصاد": {
       "count": 1,
@@ -87,7 +87,7 @@
       "count": 5,
       "total_engagement": 80,
       "avg_engagement": 22.62,
-      "weight": 1.045
+      "weight": 1.065
     },
     "saleh": {
       "count": 4,
@@ -102,9 +102,9 @@
       "weight": 0.75
     },
     "zariyah": {
-      "count": 1,
-      "total_engagement": 22,
-      "avg_engagement": 9.65,
+      "count": 2,
+      "total_engagement": 27,
+      "avg_engagement": 8.02,
       "weight": 0.75
     }
   },
@@ -152,9 +152,9 @@
       "weight": 1.0
     },
     "14": {
-      "count": 3,
-      "total_engagement": 94,
-      "avg_engagement": 16.96,
+      "count": 4,
+      "total_engagement": 99,
+      "avg_engagement": 12.77,
       "weight": 1.0
     },
     "18": {
@@ -218,5 +218,5 @@
       "weight": 1.0
     }
   },
-  "learnings_summary": "تم تحليل 15 منشوراً | أفضل صيغة: map_reel (متوسط 51.6) | أعلى تصنيف تفاعلاً: أمن (50.5) | أفضل صوت: saleh (52.6)"
+  "learnings_summary": "تم تحليل 16 منشوراً | أفضل صيغة: map_reel (متوسط 35.3) | أعلى تصنيف تفاعلاً: أمن (34.6) | أفضل صوت: saleh (52.6)"
 }
