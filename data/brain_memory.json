@@ -1,9 +1,9 @@
 {
   "version": 2,
   "created_at": "2026-11-11T02:54:03.124238+00:00",
-  "updated_at": "2026-11-26T17:02:09.613463+00:00",
-  "last_sync_at": "2026-11-26T17:02:08.117705+00:00",
-  "total_posts_analyzed": 17,
+  "updated_at": "2026-11-26T23:39:59.411049+00:00",
+  "last_sync_at": "2026-11-26T23:39:57.613742+00:00",
+  "total_posts_analyzed": 18,
   "daily_caps": {
     "max_daily_reels": 6,
     "max_daily_standard_reels": 3,
@@ -27,14 +27,14 @@
     },
     "standard_reel": {
       "count": 9,
-      "total_engagement": 160,
-      "avg_engagement": 3.92,
+      "total_engagement": 162,
+      "avg_engagement": 4.3,
       "weight": 0.75
     },
     "map_reel": {
-      "count": 8,
-      "total_engagement": 159,
-      "avg_engagement": 35.3,
+      "count": 9,
+      "total_engagement": 205,
+      "avg_engagement": 27.37,
       "weight": 1.25
     }
   },
@@ -46,21 +46,21 @@
       "weight": 1.0
     },
     "أمن": {
-      "count": 13,
-      "total_engagement": 306,
-      "avg_engagement": 34.57,
+      "count": 14,
+      "total_engagement": 352,
+      "avg_engagement": 27.07,
       "weight": 1.25
     },
     "خدمات": {
       "count": 1,
       "total_engagement": 9,
       "avg_engagement": 8.35,
-      "weight": 0.75
+      "weight": 0.833
     },
     "اقتصاد": {
       "count": 2,
-      "total_engagement": 3,
-      "avg_engagement": 3.0,
+      "total_engagement": 5,
+      "avg_engagement": 3.7,
       "weight": 0.75
     },
     "سياسة": {
@@ -85,14 +85,14 @@
     },
     "maryam": {
       "count": 6,
-      "total_engagement": 83,
-      "avg_engagement": 15.75,
-      "weight": 0.807
+      "total_engagement": 85,
+      "avg_engagement": 11.99,
+      "weight": 0.75
     },
     "saleh": {
-      "count": 4,
-      "total_engagement": 170,
-      "avg_engagement": 52.57,
+      "count": 5,
+      "total_engagement": 214,
+      "avg_engagement": 49.57,
       "weight": 1.25
     },
     "ali": {
@@ -103,8 +103,8 @@
     },
     "zariyah": {
       "count": 2,
-      "total_engagement": 27,
-      "avg_engagement": 8.02,
+      "total_engagement": 29,
+      "avg_engagement": 7.66,
       "weight": 0.75
     }
   },
@@ -153,8 +153,8 @@
     },
     "14": {
       "count": 4,
-      "total_engagement": 99,
-      "avg_engagement": 12.77,
+      "total_engagement": 101,
+      "avg_engagement": 10.75,
       "weight": 1.0
     },
     "18": {
@@ -170,9 +170,9 @@
       "weight": 1.0
     },
     "20": {
-      "count": 1,
-      "total_engagement": 12,
-      "avg_engagement": 9.04,
+      "count": 2,
+      "total_engagement": 56,
+      "avg_engagement": 21.28,
       "weight": 1.0
     },
     "21": {
@@ -219,10 +219,10 @@
     },
     "17": {
       "count": 1,
-      "total_engagement": 3,
-      "avg_engagement": 3.0,
+      "total_engagement": 5,
+      "avg_engagement": 3.7,
       "weight": 1.0
     }
   },
-  "learnings_summary": "تم تحليل 17 منشوراً | أفضل صيغة: map_reel (متوسط 35.3) | أعلى تصنيف تفاعلاً: أمن (34.6) | أفضل صوت: saleh (52.6)"
+  "learnings_summary": "تم تحليل 18 منشوراً | أفضل صيغة: map_reel (متوسط 27.4) | أعلى تصنيف تفاعلاً: أمن (27.1) | أفضل صوت: saleh (49.6)"
 }
